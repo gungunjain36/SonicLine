@@ -111,4 +111,6 @@ class BaseConnection(ABC):
             raise KeyError(f"Unknown action: {action_name}")
             
         handler = self.actions[action_name]
+        print(f"Performing action: {action_name} with kwargs: {kwargs}")
+        print(f"Handler: {handler}")
         return handler(**kwargs)

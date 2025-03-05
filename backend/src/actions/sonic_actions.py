@@ -21,9 +21,7 @@ def get_token_by_ticker(agent, **kwargs):
             return None
             
         # Direct passthrough to connection method - add your logic before/after this call!
-        agent.connection_manager.connections["sonic"].get_token_by_ticker(ticker)
-
-        return
+        return agent.connection_manager.connections["sonic"].get_token_by_ticker(ticker)
 
     except Exception as e:
         logger.error(f"Failed to get token by ticker: {str(e)}")
@@ -45,11 +43,10 @@ def get_sonic_balance(agent, **kwargs):
             address = account.address
 
         # Direct passthrough to connection method - add your logic before/after this call!
-        agent.connection_manager.connections["sonic"].get_balance(
+        return agent.connection_manager.connections["sonic"].get_balance(
             address=address,
             token_address=token_address
         )
-        return
 
     except Exception as e:
         logger.error(f"Failed to get balance: {str(e)}")
@@ -66,11 +63,10 @@ def send_sonic(agent, **kwargs):
         amount = float(kwargs.get("amount"))
 
         # Direct passthrough to connection method - add your logic before/after this call!
-        agent.connection_manager.connections["sonic"].transfer(
+        return agent.connection_manager.connections["sonic"].transfer(
             to_address=to_address,
             amount=amount
         )
-        return
 
     except Exception as e:
         logger.error(f"Failed to send $S: {str(e)}")
@@ -78,30 +74,29 @@ def send_sonic(agent, **kwargs):
 
 @register_action("send-sonic-token")
 def send_sonic_token(agent, **kwargs):
-    """Send tokens on Sonic chain.
+    """Send a token on Sonic to an address.
     This is a passthrough to sonic_connection.transfer().
     Add your custom logic here if needed!
     """
     try:
         to_address = kwargs.get("to_address")
-        token_address = kwargs.get("token_address")
         amount = float(kwargs.get("amount"))
+        token_address = kwargs.get("token_address")
 
         # Direct passthrough to connection method - add your logic before/after this call!
-        agent.connection_manager.connections["sonic"].transfer(
+        return agent.connection_manager.connections["sonic"].transfer(
             to_address=to_address,
             amount=amount,
             token_address=token_address
         )
-        return
 
     except Exception as e:
-        logger.error(f"Failed to send tokens: {str(e)}")
+        logger.error(f"Failed to send token: {str(e)}")
         return None
 
 @register_action("swap-sonic")
 def swap_sonic(agent, **kwargs):
-    """Swap tokens on Sonic chain.
+    """Swap tokens on Sonic DEX.
     This is a passthrough to sonic_connection.swap().
     Add your custom logic here if needed!
     """
@@ -112,13 +107,12 @@ def swap_sonic(agent, **kwargs):
         slippage = float(kwargs.get("slippage", 0.5))
 
         # Direct passthrough to connection method - add your logic before/after this call!
-        agent.connection_manager.connections["sonic"].swap(
+        return agent.connection_manager.connections["sonic"].swap(
             token_in=token_in,
             token_out=token_out,
             amount=amount,
             slippage=slippage
         )
-        return 
 
     except Exception as e:
         logger.error(f"Failed to swap tokens: {str(e)}")
