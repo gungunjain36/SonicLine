@@ -1,5 +1,6 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks
-
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import logging
@@ -139,38 +140,102 @@ class ZerePyServer:
                 raise HTTPException(status_code=500, detail=str(e))
 
         @self.app.post("/agent/action")
-        async def agent_action(action_request: ActionRequest):
-            """Execute a single agent action"""
-            if not self.state.cli.agent:
-                raise HTTPException(status_code=400, detail="No agent loaded")
+        async def agent_action(request: Request):
+            """
+            Endpoint to perform an action with the agent.
             
+            Request body should contain:
+            - connection: The name of the connection to use
+            - action: The name of the action to perform
+            - params: Parameters for the action (can be a list or a dictionary)
+            """
             try:
-                result = await asyncio.to_thread(
-                    self.state.cli.agent.perform_action,
-                    connection=action_request.connection,
-                    action=action_request.action,
-                    params=action_request.params
+                data = await request.json()
+                connection = data.get("connection")
+                action = data.get("action")
+                params = data.get("params", [])
+                
+                if not connection or not action:
+                    return {"status": "error", "detail": "Missing connection or action"}
+                
+                # Handle different parameter formats
+                kwargs = {}
+                
+                # If params is a list of dictionaries, extract the first one
+                if isinstance(params, list):
+                    if len(params) > 0:
+                        if isinstance(params[0], dict):
+                            # For register-wallet action, pass the wallet data directly
+                            if action == "register-wallet":
+                                kwargs = {"wallet_data": params[0]}
+                            else:
+                                # For other actions, unpack the dictionary
+                                kwargs = params[0]
+                        else:
+                            # For actions with positional arguments (like create-wallet)
+                            if action == "create-wallet":
+                                kwargs = {"chain_type": params[0] if params else "ethereum"}
+                            elif action == "register-wallet":
+                                # This shouldn't happen, but handle it just in case
+                                return {"status": "error", "detail": "Invalid wallet data format"}
+                            else:
+                                # For other actions with positional args
+                                kwargs = {"params": params}
+                elif isinstance(params, dict):
+                    # If params is a dictionary, use it directly
+                    kwargs = params
+                
+                # Perform the action
+                logger.info(f"Performing action: {action} on {connection} with params: {kwargs}")
+                result = self.state.cli.agent.perform_action(
+                    connection_name=connection,
+                    action_name=action,
+                    **kwargs
                 )
+                
                 return {"status": "success", "result": result}
             except Exception as e:
-                raise HTTPException(status_code=400, detail=str(e))
+                logger.error(f"Error in agent_action: {str(e)}")
+                return {"status": "error", "detail": str(e)}
 
         @self.app.post("/agent/chat")
         async def agent_chat(chat_request: ChatRequest):
-            """Send a chat message to the agent"""
+            """Process a chat message and return a response"""
             if not self.state.cli.agent:
                 raise HTTPException(status_code=400, detail="No agent loaded")
             
+            # Check if the message is asking to create a wallet
+            message = chat_request.message.lower()
+            wallet_keywords = [
+                "create wallet", "make wallet", "new wallet", "generate wallet", 
+                "wallet creation", "create a wallet", "make a wallet"
+            ]
+            
+            if any(keyword in message for keyword in wallet_keywords):
+                # Return a response with detailed instructions for the frontend
+                return {
+                    "status": "success",
+                    "response": "I'll create a new wallet for you right away. Please wait a moment while I set this up...",
+                    "action": "create_wallet_directly",
+                    "chain_type": "ethereum",  # Default to Ethereum
+                    "wallet_details": {
+                        "should_create": True,
+                        "should_show_in_chat": True,
+                        "should_notify_backend": True,
+                        "no_auth_required": True  # Explicitly indicate no authentication is required
+                    }
+                }
+            
+            # Normal chat processing for other messages
             try:
-                # Use the enhanced prompt_llm method that handles Sonic and Allora actions
                 response = await asyncio.to_thread(
-                    self.state.cli.agent.prompt_llm,
-                    prompt=chat_request.message
+                    self.state.cli.agent.process_message,
+                    chat_request.message
                 )
                 return {"status": "success", "response": response}
             except Exception as e:
-                logger.error(f"Error in chat: {str(e)}")
-                raise HTTPException(status_code=500, detail=str(e))
+                logger.error(f"Error processing chat message: {str(e)}")
+                return {"status": "error", "detail": str(e)}
 
         @self.app.post("/agent/start")
         async def start_agent():
@@ -232,6 +297,50 @@ class ZerePyServer:
                 
             except Exception as e:
                 raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.post("/api/mint-nft")
+        async def mint_nft(request: Request):
+            """
+            Mint an NFT with the provided metadata URI
+            """
+            try:
+                data = await request.json()
+                uri = data.get("uri")
+                description = data.get("description", "")
+                
+                if not uri:
+                    return JSONResponse(
+                        status_code=400,
+                        content={"error": "URI is required"}
+                    )
+                
+                # Call the agent to mint the NFT
+                result = self.state.cli.agent.mint_nft(uri)
+                
+                if result.get("success"):
+                    return JSONResponse(
+                        status_code=200,
+                        content={
+                            "success": True,
+                            "message": f"Successfully minted NFT with description: {description}",
+                            "transaction_hash": result.get("transaction_hash"),
+                            "explorer_link": result.get("explorer_link")
+                        }
+                    )
+                else:
+                    return JSONResponse(
+                        status_code=500,
+                        content={
+                            "success": False,
+                            "error": result.get("message", "Failed to mint NFT")
+                        }
+                    )
+            except Exception as e:
+                logger.error(f"Error minting NFT: {e}")
+                return JSONResponse(
+                    status_code=500,
+                    content={"error": f"Error minting NFT: {str(e)}"}
+                )
 
 def create_app():
     server = ZerePyServer()

@@ -12,6 +12,8 @@ import src.actions.twitter_actions
 import src.actions.echochamber_actions
 import src.actions.solana_actions
 from datetime import datetime
+from typing import Any
+import re
 
 REQUIRED_FIELDS = ["name", "bio", "traits", "examples", "loop_delay", "config", "tasks"]
 
@@ -66,6 +68,11 @@ class ZerePyAgent:
 
             # Set up empty agent state
             self.state = {}
+            
+            # Initialize model provider
+            self.model_provider = None
+            # Setup LLM provider during initialization
+            self._setup_llm_provider()
 
         except Exception as e:
             logger.error("Could not load ZerePy agent")
@@ -75,7 +82,9 @@ class ZerePyAgent:
         # Get first available LLM provider and its model
         llm_providers = self.connection_manager.get_model_providers()
         if not llm_providers:
-            raise ValueError("No configured LLM provider found")
+            logger.warning("No configured LLM provider found. Some functionality may be limited.")
+            return
+            
         self.model_provider = llm_providers[0]
 
         # Load Twitter username for self-reply detection if Twitter tasks exist
@@ -124,6 +133,8 @@ class ZerePyAgent:
                 prompt_parts.append("   Example: If user says 'Swap 10 $S for USDC', find token addresses and execute: self.perform_action('sonic', 'swap', token_in=s_address, token_out=usdc_address, amount=10)")
                 prompt_parts.append("4. Get token information - When a user asks about a token, execute the 'get-token-by-ticker' action.")
                 prompt_parts.append("   Example: If user asks 'What's the address for USDC?', execute: self.perform_action('sonic', 'get-token-by-ticker', ticker='USDC')")
+                prompt_parts.append("   Example: If user says 'Create a wallet for me', execute: self.perform_action('sonic', 'create-wallet')")
+                prompt_parts.append("   Example: If user says 'Mint an NFT with metadata https://example.com/metadata.json', execute: self.perform_action('sonic', 'mint-nft', uri='https://example.com/metadata.json')")
             
             # Check if Allora connection is available
             if "allora" in self.connection_manager.connections:
@@ -162,6 +173,12 @@ class ZerePyAgent:
 
     def prompt_llm(self, prompt: str, system_prompt: str = None) -> str:
         """Generate text using the configured LLM provider"""
+        # Ensure LLM provider is set up
+        if self.model_provider is None:
+            self._setup_llm_provider()
+            if self.model_provider is None:
+                return "I'm sorry, but I can't process your request right now. The language model provider is not available."
+                
         system_prompt = system_prompt or self._construct_system_prompt()
         
         # Check if the prompt is asking for Sonic or Allora actions
@@ -173,7 +190,6 @@ class ZerePyAgent:
         allora_topics_keywords = ["topics", "available topics", "list topics"]
         
         # Extract potential wallet address from the prompt
-        import re
         address_match = re.search(r'0x[a-fA-F0-9]{40}', prompt)
         address = address_match.group(0) if address_match else None
         
@@ -299,6 +315,31 @@ class ZerePyAgent:
                 except Exception as e:
                     logger.error(f"Error executing Allora get-inference action: {e}")
         
+        # Check for NFT minting requests
+        nft_mint_patterns = [
+            r"mint(?:\s+an?)?\s+nft\s+(?:with\s+(?:metadata|uri)\s+)?(?:at\s+)?(?P<uri>https?://\S+)",
+            r"create(?:\s+an?)?\s+nft\s+(?:with\s+(?:metadata|uri)\s+)?(?:at\s+)?(?P<uri>https?://\S+)",
+            r"generate(?:\s+an?)?\s+nft\s+(?:with\s+(?:metadata|uri)\s+)?(?:at\s+)?(?P<uri>https?://\S+)",
+            r"mint(?:\s+an?)?\s+nft\s+(?:of|with|showing|depicting)\s+(?P<description>.+)",
+            r"create(?:\s+an?)?\s+nft\s+(?:of|with|showing|depicting)\s+(?P<description>.+)",
+            r"generate(?:\s+an?)?\s+nft\s+(?:of|with|showing|depicting)\s+(?P<description>.+)"
+        ]
+        
+        for pattern in nft_mint_patterns:
+            match = re.search(pattern, prompt.lower())
+            if match:
+                if 'uri' in match.groupdict() and match.group("uri"):
+                    uri = match.group("uri")
+                    result = self.mint_nft(uri)
+                    if result.get("success"):
+                        return f"✅ Successfully minted your NFT! Transaction hash: {result.get('transaction_hash')}\nExplorer link: {result.get('explorer_link')}"
+                    else:
+                        return f"❌ Failed to mint NFT: {result.get('message')}"
+                elif 'description' in match.groupdict() and match.group("description"):
+                    # For description-based NFT requests, we'll let the frontend handle it
+                    # since it needs to generate the image and upload to IPFS first
+                    return f"I'll create an NFT based on your description: \"{match.group('description')}\". The frontend will handle the image generation and minting process."
+        
         # If no specific action was detected or executed, use the LLM to generate a response
         return self.connection_manager.perform_action(
             connection_name=self.model_provider,
@@ -306,34 +347,61 @@ class ZerePyAgent:
             params=[prompt, system_prompt]
         )
 
-    def perform_action(self, connection: str, action: str, **kwargs) -> None:
-        """Perform an action on a connection with the given parameters"""
-        # Map action names to what's expected by the connection
+    def perform_action(self, connection_name: str, action_name: str, **kwargs) -> Any:
+        """
+        Perform an action on a connection with given parameters.
+        
+        Args:
+            connection_name: The name of the connection to use
+            action_name: The name of the action to perform
+            **kwargs: Parameters for the action
+            
+        Returns:
+            The result of the action
+        """
+        # Map action names if needed
         action_mapping = {
             # Sonic actions
-            "get-balance": "get-balance",
-            "get-sonic-balance": "get-balance",
-            "transfer": "transfer",
-            "send-sonic": "transfer",
-            "send-sonic-token": "transfer",
-            "swap": "swap",
-            "swap-sonic": "swap",
-            "get-token-by-ticker": "get-token-by-ticker",
-            
+            "sonic": {
+                "get-balance": "get-balance",
+                "transfer": "transfer",
+                "deploy-contract": "deploy-contract",
+                "call-contract": "call-contract",
+                "get-transaction": "get-transaction",
+                "get-receipt": "get-receipt",
+                "create-wallet": "create-wallet",
+                "register-wallet": "register-wallet",
+                "mint-nft": "mint-nft"
+            },
             # Allora actions
-            "get-inference": "get-inference",
-            "list-topics": "list-topics"
+            "allora": {
+                "get-balance": "get-balance",
+                "transfer": "transfer"
+            }
         }
         
-        # Map the action name if needed
-        mapped_action = action_mapping.get(action, action)
+        # Check if connection exists
+        if connection_name not in self.connection_manager.connections:
+            raise ValueError(f"Unknown connection: {connection_name}")
         
-        # Convert kwargs to a list of parameters as expected by connection_manager
-        params = []
-        if kwargs:
-            params = [kwargs]
-            
-        return self.connection_manager.perform_action(connection, mapped_action, params)
+        # Map action name if needed
+        if connection_name in action_mapping and action_name in action_mapping[connection_name]:
+            action_name = action_mapping[connection_name][action_name]
+        else:
+            raise ValueError(f"Unknown action: {action_name}")
+        
+        # Special handling for wallet-related actions
+        if action_name in ["create-wallet", "register-wallet"]:
+            # These actions only require Privy credentials, not full configuration
+            pass
+        elif not self.connection_manager.is_configured(connection_name):
+            raise ValueError(f"Connection {connection_name} is not properly configured")
+        
+        # Convert kwargs to list for connection manager
+        params = list(kwargs.values()) if kwargs else []
+        
+        # Perform the action
+        return self.connection_manager.perform_action(connection_name, action_name, params)
     
     def select_action(self, use_time_based_weights: bool = False) -> dict:
         task_weights = [weight for weight in self.task_weights.copy()]
@@ -404,3 +472,89 @@ class ZerePyAgent:
         except KeyboardInterrupt:
             logger.info("\n🛑 Agent loop stopped by user.")
             return
+
+    def process_message(self, message: str) -> str:
+        """
+        Process a chat message and return a response.
+        This is the main entry point for chat functionality.
+        
+        Args:
+            message: The user's message
+            
+        Returns:
+            The agent's response
+        """
+        # Use the prompt_llm method to generate a response
+        return self.prompt_llm(message)
+
+    def swap_tokens(self, token_in_symbol: str, token_out_symbol: str, swap_amount: float) -> dict:
+        """
+        Swap tokens on Sonic
+        
+        Args:
+            token_in_symbol: Symbol of the token to swap from
+            token_out_symbol: Symbol of the token to swap to
+            swap_amount: Amount to swap
+            
+        Returns:
+            dict: Result of the swap operation
+        """
+        try:
+            # Get token addresses
+            token_in_address = self.perform_action("sonic", "get-token-by-ticker", ticker=token_in_symbol)
+            if not token_in_address:
+                return {
+                    "success": False,
+                    "message": f"Could not find token with symbol {token_in_symbol}"
+                }
+                
+            token_out_address = self.perform_action("sonic", "get-token-by-ticker", ticker=token_out_symbol)
+            if not token_out_address:
+                return {
+                    "success": False,
+                    "message": f"Could not find token with symbol {token_out_symbol}"
+                }
+                
+            # Perform the swap
+            result = self.perform_action("sonic", "swap", token_in=token_in_address, token_out=token_out_address, amount=swap_amount, slippage=0.5)
+            return result
+        except Exception as e:
+            logging.error(f"Error swapping tokens: {e}")
+            return {
+                "success": False,
+                "message": f"Error swapping tokens: {str(e)}"
+            }
+            
+    def mint_nft(self, uri: str) -> dict:
+        """
+        Mint a new NFT on Sonic
+        
+        Args:
+            uri: URI for the NFT metadata
+            
+        Returns:
+            dict: Result of the minting operation
+        """
+        try:
+            # Perform the mint action
+            result = self.perform_action("sonic", "mint-nft", uri=uri)
+            
+            if result and result.get('success'):
+                return {
+                    "success": True,
+                    "message": f"Successfully minted NFT with URI: {uri}",
+                    "transaction_hash": result.get('transaction_hash'),
+                    "explorer_link": result.get('explorer_link')
+                }
+            else:
+                error_msg = result.get('error') if result else "Unknown error"
+                return {
+                    "success": False,
+                    "message": f"Failed to mint NFT: {error_msg}"
+                }
+        except Exception as e:
+            logging.error(f"Error minting NFT: {e}")
+            return {
+                "success": False,
+                "message": f"Error minting NFT: {str(e)}"
+            }

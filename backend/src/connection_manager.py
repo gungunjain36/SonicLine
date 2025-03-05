@@ -108,6 +108,10 @@ class ConnectionManager:
             logging.error(f"\nAn error occurred: {e}")
             return False
 
+    def is_configured(self, connection_string: str) -> bool:
+        """Check if a specific connection is configured"""
+        return self._check_connection(connection_string)
+
     def configure_connection(self, connection_name: str) -> bool:
         """Configure a specific connection"""
         try:
@@ -217,6 +221,13 @@ class ConnectionManager:
                     f"\nError: Missing required parameters: {', '.join(missing_required)}"
                 )
                 return None
+            
+            print(f"Performing action: {action_name} with kwargs: {kwargs}")
+            print(f"Handler: {action}")
+            print(f"Connection: {connection}")
+            print(f"Connection name: {connection_name}")
+            print(f"Action: {action}")
+
 
             return connection.perform_action(action_name, kwargs)
 
@@ -231,5 +242,5 @@ class ConnectionManager:
         return [
             name
             for name, conn in self.connections.items()
-            if conn.is_configured() and getattr(conn, "is_llm_provider", lambda: False)
+            if conn.is_configured() and conn.is_llm_provider
         ]

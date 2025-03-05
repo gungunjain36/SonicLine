@@ -10,8 +10,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@fal-ai/client": "^1.2.3",
+    "@privy-io/react-auth": "^2.6.1",
     "@tailwindcss/vite": "^4.0.9",
     "axios": "^1.8.1",
+    "pinata-web3": "^0.5.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.2.0",

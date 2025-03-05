@@ -1,6 +1,7 @@
 import logging
 import os
 import requests
+import json
 import time
 from typing import Dict, Any, Optional
 from dotenv import load_dotenv, set_key
@@ -31,6 +32,12 @@ class SonicConnection(BaseConnection):
         network_config = SONIC_NETWORKS[network]
         self.explorer = network_config["scanner_url"]
         self.rpc_url = network_config["rpc_url"]
+        
+        # Privy API configuration
+        self.privy_app_id = config.get("privy_app_id", os.getenv("PRIVY_APP_ID", ""))
+        self.privy_app_secret = config.get("privy_app_secret", os.getenv("PRIVY_APP_SECRET", ""))
+        self.privy_authorization_key = config.get("privy_authorization_key", os.getenv("PRIVY_AUTHORIZATION_KEY", ""))
+        self.privy_api_url = "https://api.privy.io/v1/wallets"
         
         super().__init__(config)
         self._initialize_web3()
@@ -141,6 +148,27 @@ class SonicConnection(BaseConnection):
                     ActionParameter("slippage", False, float, "Max slippage percentage")
                 ],
                 description="Swap tokens"
+            ),
+            "create-wallet": Action(
+                name="create-wallet",
+                parameters=[
+                    ActionParameter("chain_type", False, str, "Blockchain type (default: ethereum)")
+                ],
+                description="Create a new wallet using Privy API"
+            ),
+            "register-wallet": Action(
+                name="register-wallet",
+                parameters=[
+                    ActionParameter("wallet_data", True, dict, "Wallet data to register")
+                ],
+                description="Register a wallet created on the client side with Privy"
+            ),
+            "mint-nft": Action(
+                name="mint-nft",
+                parameters=[
+                    ActionParameter("uri", True, str, "URI for the NFT metadata")
+                ],
+                description="Mint a new NFT with the given metadata URI"
             )
         }
 
@@ -161,6 +189,20 @@ class SonicConnection(BaseConnection):
             if not private_key.startswith('0x'):
                 private_key = '0x' + private_key
             set_key('.env', 'SONIC_PRIVATE_KEY', private_key)
+            
+            # Configure Privy API credentials
+            logger.info("\n🔷 PRIVY API SETUP (for wallet creation)")
+            privy_app_id = input("\nEnter your Privy App ID (press Enter to skip): ")
+            if privy_app_id:
+                set_key('.env', 'PRIVY_APP_ID', privy_app_id)
+                self.privy_app_id = privy_app_id
+                
+                privy_app_secret = input("\nEnter your Privy App Secret: ")
+                set_key('.env', 'PRIVY_APP_SECRET', privy_app_secret)
+                self.privy_app_secret = privy_app_secret
+                logger.info("\n✅ Privy API credentials configured")
+            else:
+                logger.info("\n⚠️ Privy API setup skipped. Wallet creation will not be available.")
 
             if not self._web3.is_connected():
                 raise SonicConnectionError("Failed to connect to Sonic network")
@@ -185,6 +227,14 @@ class SonicConnection(BaseConnection):
                 if verbose:
                     logger.error("Not connected to Sonic network")
                 return False
+                
+            # Update Privy credentials from env if they exist
+            privy_app_id = os.getenv('PRIVY_APP_ID')
+            privy_app_secret = os.getenv('PRIVY_APP_SECRET')
+            if privy_app_id and privy_app_secret:
+                self.privy_app_id = privy_app_id
+                self.privy_app_secret = privy_app_secret
+                
             return True
 
         except Exception as e:
@@ -438,21 +488,200 @@ class SonicConnection(BaseConnection):
         except Exception as e:
             logger.error(f"Swap failed: {e}")
             raise
+
+    def create_wallet(self, chain_type: str = "ethereum") -> Dict[str, Any]:
+        """
+        Create a new wallet using the Privy API.
+        
+        Args:
+            chain_type: The blockchain type (default: ethereum)
+            
+        Returns:
+            Dict containing wallet details (id, address, chain_type, policy_ids)
+        """
+        try:
+            # Check if Privy credentials are configured
+            if not self.privy_app_id or not self.privy_app_secret:
+                raise SonicConnectionError("Privy API credentials not configured. Set PRIVY_APP_ID and PRIVY_APP_SECRET in .env")
+            
+            # Use subprocess to run the Node.js script
+            import subprocess
+            import json
+            import os
+            
+            # Get the absolute path to the script
+            script_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
+                                      "scripts", "create_wallet.js")
+            
+            # Run the script with the chain_type as an argument
+            result = subprocess.run(["node", script_path, chain_type], 
+                                   capture_output=True, text=True, check=True)
+            
+            # Parse the JSON output
+            if result.stdout:
+                try:
+                    wallet_data = json.loads(result.stdout)
+                    logger.info(f"Wallet created successfully: {wallet_data['address']}")
+                    return wallet_data
+                except json.JSONDecodeError:
+                    logger.error(f"Failed to parse wallet data: {result.stdout}")
+                    raise SonicConnectionError(f"Failed to parse wallet data: {result.stdout}")
+            elif result.stderr:
+                try:
+                    error_data = json.loads(result.stderr)
+                    logger.error(f"Failed to create wallet: {error_data.get('error', 'Unknown error')}")
+                    raise SonicConnectionError(f"Failed to create wallet: {error_data.get('error', 'Unknown error')}")
+                except json.JSONDecodeError:
+                    logger.error(f"Failed to create wallet: {result.stderr}")
+                    raise SonicConnectionError(f"Failed to create wallet: {result.stderr}")
+            else:
+                raise SonicConnectionError("No response from wallet creation script")
+                
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to execute wallet creation script: {e}")
+            if e.stderr:
+                logger.error(f"Script error: {e.stderr}")
+            raise SonicConnectionError(f"Failed to execute wallet creation script: {e}")
+        except Exception as e:
+            logger.error(f"Wallet creation failed: {e}")
+            raise SonicConnectionError(f"Wallet creation failed: {e}")
+
+    def register_wallet(self, wallet_data):
+        """
+        Register a wallet created on the client side with Privy.
+        This method stores the wallet information for future reference.
+        
+        Args:
+            wallet_data (dict): The wallet data containing id, address, and chain_type
+            
+        Returns:
+            dict: The registered wallet data
+        """
+        logger.info(f"Registering wallet: {wallet_data['address']} on {wallet_data['chain_type']}")
+        
+        # Here you could store the wallet in a database or other persistent storage
+        # For now, we'll just log it and return the data
+        
+        # You could also add additional validation or processing here
+        
+        return wallet_data
+
+    def mint_nft(self, uri: str) -> dict:
+        """
+        Mint a new NFT with the given URI.
+        
+        Args:
+            uri (str): The URI for the NFT metadata
+            
+        Returns:
+            dict: Transaction details including hash and explorer link
+        """
+        from ..constants.abi import SONIC_NFT_ADDRESS, SONIC_NFT_MINT_ABI
+        
+        try:
+            # Load private key from environment
+            load_dotenv()
+            private_key = os.getenv("SONIC_PRIVATE_KEY")
+            if not private_key:
+                raise ValueError("SONIC_PRIVATE_KEY not found in environment variables")
+            
+            # Get account from private key
+            account = self._web3.eth.account.from_key(private_key)
+            
+            # Create contract instance
+            contract = self._web3.eth.contract(address=SONIC_NFT_ADDRESS, abi=SONIC_NFT_MINT_ABI)
+            
+            # Estimate gas for the transaction
+            gas_estimate = contract.functions.mint(uri).estimate_gas({'from': account.address})
+            
+            # Build the transaction
+            tx = contract.functions.mint(uri).build_transaction({
+                'from': account.address,
+                'gas': int(gas_estimate * 1.2),  # Add 20% buffer
+                'nonce': self._web3.eth.get_transaction_count(account.address),
+                'chainId': self._web3.eth.chain_id
+            })
+            
+            # Sign the transaction
+            signed_tx = self._web3.eth.account.sign_transaction(tx, private_key)
+            
+            # Send the transaction
+            tx_hash = self._web3.eth.send_raw_transaction(signed_tx.rawTransaction)
+            
+            # Wait for transaction receipt
+            receipt = self._web3.eth.wait_for_transaction_receipt(tx_hash)
+            
+            # Get transaction hash as hex
+            tx_hash_hex = self._web3.to_hex(tx_hash)
+            
+            # Generate explorer link
+            explorer_link = self._get_explorer_link(tx_hash_hex)
+            
+            logger.info(f"NFT minted successfully. Transaction hash: {tx_hash_hex}")
+            
+            return {
+                'success': True,
+                'transaction_hash': tx_hash_hex,
+                'explorer_link': explorer_link,
+                'status': receipt.status,
+                'block_number': receipt.blockNumber,
+                'uri': uri
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to mint NFT: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
     def perform_action(self, action_name: str, kwargs) -> Any:
         """Execute a Sonic action with validation"""
-        if action_name not in self.actions:
-            raise KeyError(f"Unknown action: {action_name}")
-
         load_dotenv()
         
-        if not self.is_configured(verbose=True):
-            raise SonicConnectionError("Sonic is not properly configured")
-
-        action = self.actions[action_name]
-        errors = action.validate_params(kwargs)
-        if errors:
-            raise ValueError(f"Invalid parameters: {', '.join(errors)}")
-
-        method_name = action_name.replace('-', '_')
+        # Define available actions
+        available_actions = [
+            "create-wallet",
+            "register-wallet",
+            "get-balance",
+            "transfer",
+            "deploy-contract",
+            "call-contract",
+            "get-transaction",
+            "get-receipt",
+            "mint-nft"
+        ]
+        
+        # Check if action is valid
+        if action_name not in available_actions:
+            raise ValueError(f"Unknown action: {action_name}")
+        
+        # Special handling for wallet-related actions that don't require full configuration
+        if action_name in ["create-wallet", "register-wallet"]:
+            # For wallet creation/registration, we only need Privy credentials
+            if action_name == "create-wallet":
+                chain_type = kwargs[0] if isinstance(kwargs, list) and len(kwargs) > 0 else "ethereum"
+                return self.create_wallet(chain_type)
+            elif action_name == "register-wallet":
+                wallet_data = kwargs[0] if isinstance(kwargs, list) and len(kwargs) > 0 else kwargs
+                return self.register_wallet(wallet_data)
+        elif action_name == "mint-nft":
+            # Handle mint-nft action
+            uri = kwargs.get("uri") if isinstance(kwargs, dict) else kwargs[0]
+            return self.mint_nft(uri)
+        
+        # For other actions, check if the connection is properly configured
+        if not self.is_configured():
+            raise ValueError("Sonic connection is not properly configured")
+        
+        # Convert action name to method name (e.g., "get-balance" -> "get_balance")
+        method_name = action_name.replace("-", "_")
+        
+        # Get the method from the class
         method = getattr(self, method_name)
-        return method(**kwargs)
+        
+        # Execute the method with the provided arguments
+        if isinstance(kwargs, list):
+            return method(*kwargs)
+        else:
+            return method(**kwargs)
