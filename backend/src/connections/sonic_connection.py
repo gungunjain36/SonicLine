@@ -162,6 +162,13 @@ class SonicConnection(BaseConnection):
                     ActionParameter("wallet_data", True, dict, "Wallet data to register")
                 ],
                 description="Register a wallet created on the client side with Privy"
+            ),
+            "mint-nft": Action(
+                name="mint-nft",
+                parameters=[
+                    ActionParameter("uri", True, str, "URI for the NFT metadata")
+                ],
+                description="Mint a new NFT with the given metadata URI"
             )
         }
 
@@ -550,7 +557,7 @@ class SonicConnection(BaseConnection):
         Returns:
             dict: The registered wallet data
         """
-        self.logger.info(f"Registering wallet: {wallet_data['address']} on {wallet_data['chain_type']}")
+        logger.info(f"Registering wallet: {wallet_data['address']} on {wallet_data['chain_type']}")
         
         # Here you could store the wallet in a database or other persistent storage
         # For now, we'll just log it and return the data
@@ -558,6 +565,75 @@ class SonicConnection(BaseConnection):
         # You could also add additional validation or processing here
         
         return wallet_data
+
+    def mint_nft(self, uri: str) -> dict:
+        """
+        Mint a new NFT with the given URI.
+        
+        Args:
+            uri (str): The URI for the NFT metadata
+            
+        Returns:
+            dict: Transaction details including hash and explorer link
+        """
+        from ..constants.abi import SONIC_NFT_ADDRESS, SONIC_NFT_MINT_ABI
+        
+        try:
+            # Load private key from environment
+            load_dotenv()
+            private_key = os.getenv("SONIC_PRIVATE_KEY")
+            if not private_key:
+                raise ValueError("SONIC_PRIVATE_KEY not found in environment variables")
+            
+            # Get account from private key
+            account = self._web3.eth.account.from_key(private_key)
+            
+            # Create contract instance
+            contract = self._web3.eth.contract(address=SONIC_NFT_ADDRESS, abi=SONIC_NFT_MINT_ABI)
+            
+            # Estimate gas for the transaction
+            gas_estimate = contract.functions.mint(uri).estimate_gas({'from': account.address})
+            
+            # Build the transaction
+            tx = contract.functions.mint(uri).build_transaction({
+                'from': account.address,
+                'gas': int(gas_estimate * 1.2),  # Add 20% buffer
+                'nonce': self._web3.eth.get_transaction_count(account.address),
+                'chainId': self._web3.eth.chain_id
+            })
+            
+            # Sign the transaction
+            signed_tx = self._web3.eth.account.sign_transaction(tx, private_key)
+            
+            # Send the transaction
+            tx_hash = self._web3.eth.send_raw_transaction(signed_tx.rawTransaction)
+            
+            # Wait for transaction receipt
+            receipt = self._web3.eth.wait_for_transaction_receipt(tx_hash)
+            
+            # Get transaction hash as hex
+            tx_hash_hex = self._web3.to_hex(tx_hash)
+            
+            # Generate explorer link
+            explorer_link = self._get_explorer_link(tx_hash_hex)
+            
+            logger.info(f"NFT minted successfully. Transaction hash: {tx_hash_hex}")
+            
+            return {
+                'success': True,
+                'transaction_hash': tx_hash_hex,
+                'explorer_link': explorer_link,
+                'status': receipt.status,
+                'block_number': receipt.blockNumber,
+                'uri': uri
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to mint NFT: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
 
     def perform_action(self, action_name: str, kwargs) -> Any:
         """Execute a Sonic action with validation"""
@@ -572,7 +648,8 @@ class SonicConnection(BaseConnection):
             "deploy-contract",
             "call-contract",
             "get-transaction",
-            "get-receipt"
+            "get-receipt",
+            "mint-nft"
         ]
         
         # Check if action is valid
@@ -588,6 +665,10 @@ class SonicConnection(BaseConnection):
             elif action_name == "register-wallet":
                 wallet_data = kwargs[0] if isinstance(kwargs, list) and len(kwargs) > 0 else kwargs
                 return self.register_wallet(wallet_data)
+        elif action_name == "mint-nft":
+            # Handle mint-nft action
+            uri = kwargs.get("uri") if isinstance(kwargs, dict) else kwargs[0]
+            return self.mint_nft(uri)
         
         # For other actions, check if the connection is properly configured
         if not self.is_configured():

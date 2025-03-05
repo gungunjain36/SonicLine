@@ -298,6 +298,50 @@ class ZerePyServer:
             except Exception as e:
                 raise HTTPException(status_code=500, detail=str(e))
 
+        @self.app.post("/api/mint-nft")
+        async def mint_nft(request: Request):
+            """
+            Mint an NFT with the provided metadata URI
+            """
+            try:
+                data = await request.json()
+                uri = data.get("uri")
+                description = data.get("description", "")
+                
+                if not uri:
+                    return JSONResponse(
+                        status_code=400,
+                        content={"error": "URI is required"}
+                    )
+                
+                # Call the agent to mint the NFT
+                result = self.state.cli.agent.mint_nft(uri)
+                
+                if result.get("success"):
+                    return JSONResponse(
+                        status_code=200,
+                        content={
+                            "success": True,
+                            "message": f"Successfully minted NFT with description: {description}",
+                            "transaction_hash": result.get("transaction_hash"),
+                            "explorer_link": result.get("explorer_link")
+                        }
+                    )
+                else:
+                    return JSONResponse(
+                        status_code=500,
+                        content={
+                            "success": False,
+                            "error": result.get("message", "Failed to mint NFT")
+                        }
+                    )
+            except Exception as e:
+                logger.error(f"Error minting NFT: {e}")
+                return JSONResponse(
+                    status_code=500,
+                    content={"error": f"Error minting NFT: {str(e)}"}
+                )
+
 def create_app():
     server = ZerePyServer()
     return server.app

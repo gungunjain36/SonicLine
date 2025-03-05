@@ -254,3 +254,29 @@ def create_wallet(agent, **kwargs):
     except Exception as e:
         logger.error(f"Failed to create wallet: {str(e)}")
         return None
+
+@register_action_handler("sonic", "create-wallet")
+def create_sonic_wallet(agent, **kwargs):
+    """Create a new Sonic wallet"""
+    try:
+        chain_type = kwargs.get("chain_type", "ethereum")
+        return agent.connection_manager.connections["sonic"].create_wallet(chain_type)
+    except Exception as e:
+        logging.error(f"Failed to create wallet: {e}")
+        return None
+
+@register_action_handler("sonic", "mint-nft")
+def mint_sonic_nft(agent, **kwargs):
+    """Mint a new NFT on Sonic with the given metadata URI"""
+    try:
+        uri = kwargs.get("uri")
+        if not uri:
+            logging.error("No URI provided for NFT minting")
+            return None
+        
+        # Call the mint_nft method on the Sonic connection
+        result = agent.connection_manager.connections["sonic"].mint_nft(uri)
+        return result
+    except Exception as e:
+        logging.error(f"Failed to mint NFT: {e}")
+        return None

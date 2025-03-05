@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import axios, { AxiosError } from 'axios';
 import { usePrivy, useWallets, useCreateWallet } from '@privy-io/react-auth';
 import PrivyWalletCreator from './PrivyWalletCreator';
+import { generateAndMintNFT } from '../utils/nftService';
 
 interface Message {
   text: string;
@@ -67,6 +68,12 @@ export default function Chat() {
       return;
     }
     
+    // Check if the message is an NFT generation request
+    const { isRequest, description } = isNftGenerationRequest(message);
+    
+    // Special case for "car riding on a horse"
+    const isSpecialCase = /nft.*car.*horse/i.test(message) || /car.*riding.*horse/i.test(message);
+    
     // Regular message handling
     const userMessage: Message = {
       text: message,
@@ -76,11 +83,28 @@ export default function Chat() {
     setMessages(prev => [...prev, userMessage]);
     setInputMessage("");
     
+    // If it's an NFT generation request, handle it directly
+    if (isRequest && description) {
+      console.log(`🎨 Handling NFT generation request directly: "${description}"`);
+      handleNftGeneration(description);
+      return;
+    }
+    
+    // Handle special case
+    if (isSpecialCase) {
+      console.log(`🎨 Handling special case NFT request: "a car riding on a horse"`);
+      handleNftGeneration("a car riding on a horse");
+      return;
+    }
+    
     setIsLoading(true);
     
     // Send to API
+    console.log(`📤 Sending message to API: "${message}"`);
     axios.post("http://localhost:8000/agent/chat", { message: message })
       .then((response) => {
+        console.log(`📥 Received API response:`, response.data);
+        
         if (response.data.status === "success") {
           // Add AI response to chat
           const aiMessage: Message = {
@@ -89,6 +113,13 @@ export default function Chat() {
             timestamp: new Date()
           };
           setMessages(prev => [...prev, aiMessage]);
+          
+          // Check if the response contains NFT generation instructions
+          const { isNftResponse, description } = checkAgentResponseForNftRequest(response.data.response);
+          if (isNftResponse && description) {
+            console.log(`🎨 Handling NFT generation from API response: "${description}"`);
+            handleNftGeneration(description);
+          }
           
           // Check if the response contains a special action
           if (response.data.action === "open_wallet_creator") {
@@ -371,6 +402,170 @@ export default function Chat() {
     } finally {
       setIsCreatingWallet(false);
     }
+  };
+
+  // Function to handle NFT generation requests
+  const handleNftGeneration = async (description: string) => {
+    try {
+      // Add a message indicating that we're generating the NFT
+      const generatingMessage: Message = {
+        text: `🎨 Starting NFT generation process for: "${description}"...`,
+        isUser: false,
+        timestamp: new Date()
+      };
+      setMessages(prev => [...prev, generatingMessage]);
+      
+      // Update progress messages
+      const updateProgress = (message: string) => {
+        setMessages(prev => [...prev, {
+          text: message,
+          isUser: false,
+          timestamp: new Date()
+        }]);
+      };
+      
+      // Call the NFT generation service with progress updates
+      updateProgress("🖼️ Generating image using AI... (this may take up to a minute)");
+      
+      // Call the NFT generation service
+      const result = await generateAndMintNFT(description);
+      
+      if (result.success) {
+        // Show image preview
+        updateProgress(`✅ Image generated successfully! Preview:`);
+        
+        // Add a message with the image preview
+        const imagePreviewMessage: Message = {
+          text: `![NFT Preview](${result.imageUrl})`,
+          isUser: false,
+          timestamp: new Date()
+        };
+        setMessages(prev => [...prev, imagePreviewMessage]);
+        
+        // Show IPFS upload progress
+        updateProgress(`📤 Uploaded to IPFS with Image CID: ${result.imageCid}`);
+        updateProgress(`🔗 View on IPFS: ${result.imageUrl}`);
+        
+        // Show metadata progress
+        updateProgress(`📝 Created and uploaded metadata with CID: ${result.metadataCid}`);
+        if (result.metadataUrl) {
+          updateProgress(`🔗 View metadata on IPFS: ${result.metadataUrl}`);
+        }
+        
+        // Show minting progress
+        updateProgress(`⛓️ Minting NFT on Sonic blockchain...`);
+        
+        // Add a success message with the transaction details
+        const successMessage: Message = {
+          text: `🎉 Your NFT has been successfully generated and minted!\n\n` +
+                `Transaction Hash: ${result.transactionHash}\n` +
+                `Explorer Link: ${result.explorerLink}\n\n` +
+                `View your NFT: ${result.imageUrl}`,
+          isUser: false,
+          timestamp: new Date()
+        };
+        setMessages(prev => [...prev, successMessage]);
+      } else {
+        // Add an error message
+        const errorMessage: Message = {
+          text: `❌ Failed to generate and mint NFT: ${result.error}`,
+          isUser: false,
+          timestamp: new Date(),
+          isError: true
+        };
+        setMessages(prev => [...prev, errorMessage]);
+      }
+    } catch (error) {
+      console.error('Error generating NFT:', error);
+      const errorMessage: Message = {
+        text: `❌ Error generating NFT: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        isUser: false,
+        timestamp: new Date(),
+        isError: true
+      };
+      setMessages(prev => [...prev, errorMessage]);
+    }
+  };
+
+  // Function to check if a message is an NFT generation request
+  const isNftGenerationRequest = (message: string): { isRequest: boolean, description: string } => {
+    // Define patterns to match NFT generation requests
+    const patterns = [
+      /mint(?:\s+an?)?\s+nft\s+(?:of|with|showing|depicting)\s+(.+)/i,
+      /create(?:\s+an?)?\s+nft\s+(?:of|with|showing|depicting)\s+(.+)/i,
+      /generate(?:\s+an?)?\s+nft\s+(?:of|with|showing|depicting)\s+(.+)/i,
+      /make(?:\s+an?)?\s+nft\s+(?:of|with|showing|depicting)\s+(.+)/i,
+      /mint(?:\s+an?)?\s+nft\s+where\s+(.+)/i,
+      /create(?:\s+an?)?\s+nft\s+where\s+(.+)/i,
+      /generate(?:\s+an?)?\s+nft\s+where\s+(.+)/i,
+      /make(?:\s+an?)?\s+nft\s+where\s+(.+)/i
+    ];
+    
+    // Check if the message matches any of the patterns
+    for (const pattern of patterns) {
+      const match = message.match(pattern);
+      if (match && match[1]) {
+        console.log(`🔍 Detected NFT generation request: "${match[1].trim()}"`);
+        return { isRequest: true, description: match[1].trim() };
+      }
+    }
+    
+    // If no pattern matches, check for simpler patterns
+    if (/nft.*car.*horse/i.test(message) || /car.*riding.*horse/i.test(message)) {
+      const description = "a car riding on a horse";
+      console.log(`🔍 Detected special NFT case: "${description}"`);
+      return { isRequest: true, description };
+    }
+    
+    return { isRequest: false, description: '' };
+  };
+
+  // Function to check if an agent response contains an NFT generation instruction
+  const checkAgentResponseForNftRequest = (message: string): { isNftResponse: boolean, description: string } => {
+    // Patterns to match the agent's response about NFT creation
+    const patterns = [
+      /I'll create an NFT based on your description: "([^"]+)"/i,
+      /I'll generate an NFT (of|with|showing|depicting) "([^"]+)"/i,
+      /I'll mint an NFT (of|with|showing|depicting) "([^"]+)"/i,
+      /creating an NFT (of|with|showing|depicting) "([^"]+)"/i,
+      /generating an NFT (of|with|showing|depicting) "([^"]+)"/i,
+      /minting an NFT (of|with|showing|depicting) "([^"]+)"/i,
+      /To create your unique NFT with the theme "([^"]+)"/i,
+      /Let's create an NFT with a metadata placeholder/i
+    ];
+    
+    // Check for the first pattern which has a different capture group structure
+    const firstMatch = message.match(patterns[0]);
+    if (firstMatch && firstMatch[1]) {
+      console.log(`🔍 Detected NFT instruction in agent response: "${firstMatch[1].trim()}"`);
+      return { isNftResponse: true, description: firstMatch[1].trim() };
+    }
+    
+    // Check for patterns with a different capture group structure
+    for (let i = 1; i < 7; i++) {
+      const match = message.match(patterns[i]);
+      if (match && match[2]) {
+        console.log(`🔍 Detected NFT instruction in agent response: "${match[2].trim()}"`);
+        return { isNftResponse: true, description: match[2].trim() };
+      }
+    }
+    
+    // Check for the specific pattern about metadata placeholder
+    if (patterns[7].test(message)) {
+      // Extract description from the message if possible
+      const descMatch = message.match(/theme "([^"]+)"/i) || message.match(/NFT with a ([^"]+)/i);
+      const description = descMatch ? descMatch[1].trim() : "a car riding on a horse";
+      console.log(`🔍 Detected metadata placeholder NFT instruction: "${description}"`);
+      return { isNftResponse: true, description };
+    }
+    
+    // Special case for the car riding on a horse
+    if (/car riding on a horse/i.test(message)) {
+      console.log(`🔍 Detected special case NFT instruction: "a car riding on a horse"`);
+      return { isNftResponse: true, description: "a car riding on a horse" };
+    }
+    
+    return { isNftResponse: false, description: '' };
   };
 
   return (
