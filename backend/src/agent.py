@@ -12,6 +12,7 @@ import src.actions.twitter_actions
 import src.actions.echochamber_actions
 import src.actions.solana_actions
 from datetime import datetime
+from typing import Any
 
 REQUIRED_FIELDS = ["name", "bio", "traits", "examples", "loop_delay", "config", "tasks"]
 
@@ -66,6 +67,11 @@ class ZerePyAgent:
 
             # Set up empty agent state
             self.state = {}
+            
+            # Initialize model provider
+            self.model_provider = None
+            # Setup LLM provider during initialization
+            self._setup_llm_provider()
 
         except Exception as e:
             logger.error("Could not load ZerePy agent")
@@ -75,7 +81,9 @@ class ZerePyAgent:
         # Get first available LLM provider and its model
         llm_providers = self.connection_manager.get_model_providers()
         if not llm_providers:
-            raise ValueError("No configured LLM provider found")
+            logger.warning("No configured LLM provider found. Some functionality may be limited.")
+            return
+            
         self.model_provider = llm_providers[0]
 
         # Load Twitter username for self-reply detection if Twitter tasks exist
@@ -162,6 +170,12 @@ class ZerePyAgent:
 
     def prompt_llm(self, prompt: str, system_prompt: str = None) -> str:
         """Generate text using the configured LLM provider"""
+        # Ensure LLM provider is set up
+        if self.model_provider is None:
+            self._setup_llm_provider()
+            if self.model_provider is None:
+                return "I'm sorry, but I can't process your request right now. The language model provider is not available."
+                
         system_prompt = system_prompt or self._construct_system_prompt()
         
         # Check if the prompt is asking for Sonic or Allora actions
@@ -306,34 +320,60 @@ class ZerePyAgent:
             params=[prompt, system_prompt]
         )
 
-    def perform_action(self, connection: str, action: str, **kwargs) -> None:
-        """Perform an action on a connection with the given parameters"""
-        # Map action names to what's expected by the connection
+    def perform_action(self, connection_name: str, action_name: str, **kwargs) -> Any:
+        """
+        Perform an action on a connection with given parameters.
+        
+        Args:
+            connection_name: The name of the connection to use
+            action_name: The name of the action to perform
+            **kwargs: Parameters for the action
+            
+        Returns:
+            The result of the action
+        """
+        # Map action names if needed
         action_mapping = {
             # Sonic actions
-            "get-balance": "get-balance",
-            "get-sonic-balance": "get-balance",
-            "transfer": "transfer",
-            "send-sonic": "transfer",
-            "send-sonic-token": "transfer",
-            "swap": "swap",
-            "swap-sonic": "swap",
-            "get-token-by-ticker": "get-token-by-ticker",
-            
+            "sonic": {
+                "get-balance": "get-balance",
+                "transfer": "transfer",
+                "deploy-contract": "deploy-contract",
+                "call-contract": "call-contract",
+                "get-transaction": "get-transaction",
+                "get-receipt": "get-receipt",
+                "create-wallet": "create-wallet",
+                "register-wallet": "register-wallet"
+            },
             # Allora actions
-            "get-inference": "get-inference",
-            "list-topics": "list-topics"
+            "allora": {
+                "get-balance": "get-balance",
+                "transfer": "transfer"
+            }
         }
         
-        # Map the action name if needed
-        mapped_action = action_mapping.get(action, action)
+        # Check if connection exists
+        if connection_name not in self.connection_manager.connections:
+            raise ValueError(f"Unknown connection: {connection_name}")
         
-        # Convert kwargs to a list of parameters as expected by connection_manager
-        params = []
-        if kwargs:
-            params = [kwargs]
-            
-        return self.connection_manager.perform_action(connection, mapped_action, params)
+        # Map action name if needed
+        if connection_name in action_mapping and action_name in action_mapping[connection_name]:
+            action_name = action_mapping[connection_name][action_name]
+        else:
+            raise ValueError(f"Unknown action: {action_name}")
+        
+        # Special handling for wallet-related actions
+        if action_name in ["create-wallet", "register-wallet"]:
+            # These actions only require Privy credentials, not full configuration
+            pass
+        elif not self.connection_manager.is_configured(connection_name):
+            raise ValueError(f"Connection {connection_name} is not properly configured")
+        
+        # Convert kwargs to list for connection manager
+        params = list(kwargs.values()) if kwargs else []
+        
+        # Perform the action
+        return self.connection_manager.perform_action(connection_name, action_name, params)
     
     def select_action(self, use_time_based_weights: bool = False) -> dict:
         task_weights = [weight for weight in self.task_weights.copy()]
@@ -404,3 +444,17 @@ class ZerePyAgent:
         except KeyboardInterrupt:
             logger.info("\n🛑 Agent loop stopped by user.")
             return
+
+    def process_message(self, message: str) -> str:
+        """
+        Process a chat message and return a response.
+        This is the main entry point for chat functionality.
+        
+        Args:
+            message: The user's message
+            
+        Returns:
+            The agent's response
+        """
+        # Use the prompt_llm method to generate a response
+        return self.prompt_llm(message)

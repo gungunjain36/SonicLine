@@ -9,6 +9,8 @@ lerna-debug.log*
 
 paths.json
 
+.env
+
 node_modules
 dist
 dist-ssr

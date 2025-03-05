@@ -231,5 +231,5 @@ class ConnectionManager:
         return [
             name
             for name, conn in self.connections.items()
-            if conn.is_configured() and getattr(conn, "is_llm_provider", lambda: False)
+            if conn.is_configured() and conn.is_llm_provider
         ]
