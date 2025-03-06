@@ -1,9 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import axios, { AxiosError } from 'axios';
-import { usePrivy, useWallets, useCreateWallet } from '@privy-io/react-auth';
+import axios from 'axios';
+import { usePrivy, useCreateWallet, useWallets } from '@privy-io/react-auth';
 import PrivyWalletCreator from './PrivyWalletCreator';
-import { generateAndMintNFT } from '../utils/nftService';
+// @ts-expect-error
+import * as nftService from '../utils/nftService';
+import VoiceInput from './VoiceInput';
+import { textToSpeech, playAudio } from '../utils/elevenLabsService';
 
 interface Message {
   text: string;
@@ -11,6 +13,14 @@ interface Message {
   isError?: boolean;
   timestamp: Date;
   isEmailInput?: boolean;
+  imageUrl?: string;
+}
+
+interface CommunicationLog {
+  timestamp: Date;
+  is_user: boolean;
+  message: string;
+  imageUrl?: string;
 }
 
 interface WalletData {
@@ -20,11 +30,17 @@ interface WalletData {
   policy_ids?: string[];
 }
 
+// Add a new interface for voice settings
+interface VoiceSettings {
+  enabled: boolean;
+  autoPlayResponses: boolean;
+}
+
 export default function Chat() {
-  const navigate = useNavigate();
+  const { authenticated, login, user } = usePrivy();
   const [messages, setMessages] = useState<Message[]>([
     {
-      text: "Hello! How can I assist you today?",
+      text: "Hello! I'm SonicLine Assistant. How can I help you today?",
       isUser: false,
       timestamp: new Date()
     }
@@ -32,24 +48,64 @@ export default function Chat() {
   const [inputMessage, setInputMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showPrivyWalletCreator, setShowPrivyWalletCreator] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const {
-    login,
-    authenticated,
-    ready,
-    user,
-  } = usePrivy();
-  const { createWallet } = useCreateWallet();
-  const { wallets } = useWallets();
+  const [wallets, setWallets] = useState<WalletData[]>([]);
   const [isCreatingWallet, setIsCreatingWallet] = useState(false);
   const [waitingForEmail, setWaitingForEmail] = useState(false);
-  const [pendingChainType, setPendingChainType] = useState<string | null>(null);
+  const [showConversationHistory, setShowConversationHistory] = useState(false);
+  const [communicationLogs, setCommunicationLogs] = useState<CommunicationLog[]>([]);
+  
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const { createWallet } = useCreateWallet();
+  const { wallets: privyWallets } = useWallets();
+
+  // Add new state for voice features
+  const [voiceSettings, setVoiceSettings] = useState<VoiceSettings>({
+    enabled: true,
+    autoPlayResponses: true
+  });
+  const [isSpeaking, setIsSpeaking] = useState(false);
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // Fetch communication logs periodically
+  useEffect(() => {
+    if (showConversationHistory) {
+      const fetchCommunicationLogs = async () => {
+        try {
+          const response = await axios.get('http://localhost:8000/communication-logs');
+          if (response.data && response.data.logs) {
+            setCommunicationLogs(response.data.logs.map((log: any) => ({
+              timestamp: new Date(log.timestamp),
+              is_user: log.is_user,
+              message: log.message,
+              imageUrl: log.imageUrl
+            })));
+          }
+        } catch (error) {
+          console.error('Error fetching communication logs:', error);
+        }
+      };
+
+      fetchCommunicationLogs();
+      const intervalId = setInterval(fetchCommunicationLogs, 3000); // Fetch logs every 3 seconds
+      
+      return () => clearInterval(intervalId);
+    }
+  }, [showConversationHistory]);
+
+  // Add a function to handle voice input
+  const handleVoiceInput = (text: string) => {
+    if (text.trim()) {
+      setInputMessage(text);
+      handleSend(text);
+    }
+  };
+
+  // Modify the handleSend function to include voice feedback
   function handleSend(message: string) {
     if (!message.trim()) return;
     
@@ -103,68 +159,35 @@ export default function Chat() {
     console.log(`📤 Sending message to API: "${message}"`);
     axios.post("http://localhost:8000/agent/chat", { message: message })
       .then((response) => {
-        console.log(`📥 Received API response:`, response.data);
+        console.log("📥 Received response:", response.data);
         
-        if (response.data.status === "success") {
-          // Add AI response to chat
-          const aiMessage: Message = {
+        if (response.data && response.data.response) {
+          const botMessage: Message = {
             text: response.data.response,
             isUser: false,
             timestamp: new Date()
           };
-          setMessages(prev => [...prev, aiMessage]);
           
-          // Check if the response contains NFT generation instructions
+          setMessages(prev => [...prev, botMessage]);
+          
+          // Check if the response indicates an NFT request
           const { isNftResponse, description } = checkAgentResponseForNftRequest(response.data.response);
+          
           if (isNftResponse && description) {
-            console.log(`🎨 Handling NFT generation from API response: "${description}"`);
+            console.log(`🎨 Detected NFT request in response: "${description}"`);
             handleNftGeneration(description);
           }
           
-          // Check if the response contains a special action
-          if (response.data.action === "open_wallet_creator") {
-            // Open the wallet creation modal
-            setTimeout(() => {
-              setShowPrivyWalletCreator(true);
-            }, 500); // Small delay to ensure the message is displayed first
-          } else if (response.data.action === "create_wallet_directly") {
-            // Handle wallet creation directly in the chat
-            handleWalletCreation(response.data.chain_type || "ethereum");
+          // Convert response to speech if voice is enabled
+          if (voiceSettings.enabled && voiceSettings.autoPlayResponses) {
+            speakText(response.data.response);
           }
-        } else {
-          // Handle non-success status
-          const errorMessage: Message = {
-            text: response.data.detail || "Sorry, there was an error processing your request.",
-            isUser: false,
-            timestamp: new Date(),
-            isError: true
-          };
-          setMessages(prev => [...prev, errorMessage]);
         }
       })
       .catch((error) => {
-        console.error("Error:", error);
-        // Add error message with specific details if available
-        let errorText = "Sorry, there was an error processing your request.";
-        
-        if (error.response) {
-          // The request was made and the server responded with a status code
-          // that falls out of the range of 2xx
-          if (error.response.data && error.response.data.detail) {
-            errorText = `Error: ${error.response.data.detail}`;
-          } else {
-            errorText = `Error ${error.response.status}: ${error.response.statusText}`;
-          }
-        } else if (error.request) {
-          // The request was made but no response was received
-          errorText = "Error: No response received from server. Please check if the backend is running.";
-        } else {
-          // Something happened in setting up the request that triggered an Error
-          errorText = `Error: ${error.message}`;
-        }
-        
+        console.error("Error sending message:", error);
         const errorMessage: Message = {
-          text: errorText,
+          text: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
           isUser: false,
           timestamp: new Date(),
           isError: true
@@ -175,6 +198,34 @@ export default function Chat() {
         setIsLoading(false);
       });
   }
+
+  // Add a function to speak text using Eleven Labs
+  const speakText = async (text: string) => {
+    try {
+      setIsSpeaking(true);
+      const audioBlob = await textToSpeech(text);
+      await playAudio(audioBlob);
+    } catch (error) {
+      console.error('Error speaking text:', error);
+    } finally {
+      setIsSpeaking(false);
+    }
+  };
+
+  // Add a function to toggle voice settings
+  const toggleVoiceEnabled = () => {
+    setVoiceSettings(prev => ({
+      ...prev,
+      enabled: !prev.enabled
+    }));
+  };
+
+  const toggleAutoPlayResponses = () => {
+    setVoiceSettings(prev => ({
+      ...prev,
+      autoPlayResponses: !prev.autoPlayResponses
+    }));
+  };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -260,7 +311,7 @@ export default function Chat() {
 
   // Function to handle wallet creation directly in the chat
   const handleWalletCreation = async (chainType: string) => {
-    if (!ready) {
+    if (!authenticated) {
       const errorMessage: Message = {
         text: "Wallet creation is not ready yet. Please try again in a moment.",
         isUser: false,
@@ -282,7 +333,7 @@ export default function Chat() {
 
     try {
       // Check if user already has embedded wallets
-      const userWallets = wallets.filter(wallet => wallet.walletClientType === 'privy');
+      const userWallets = privyWallets.filter(wallet => wallet.walletClientType === 'privy');
       let newWallet;
 
       if (userWallets.length > 0) {
@@ -339,7 +390,7 @@ export default function Chat() {
       
       if (errorMessage.includes('authenticated') || errorMessage.includes('auth')) {
         // Handle authentication error
-        setPendingChainType(chainType);
+        handleWalletCreation(chainType);
         
         const authErrorMessage: Message = {
           text: "To create a wallet, you need to authenticate first. Don't worry, it's quick and easy!",
@@ -361,7 +412,7 @@ export default function Chat() {
         setWaitingForEmail(true);
       } else if (errorMessage.includes('already has an embedded wallet')) {
         // Handle case where user already has a wallet
-        const existingWallets = wallets.filter(wallet => wallet.walletClientType === 'privy');
+        const existingWallets = privyWallets.filter(wallet => wallet.walletClientType === 'privy');
         
         if (existingWallets.length > 0) {
           const existingWallet = existingWallets[0];
@@ -407,13 +458,7 @@ export default function Chat() {
   // Function to handle NFT generation requests
   const handleNftGeneration = async (description: string) => {
     try {
-      // Add a message indicating that we're generating the NFT
-      const generatingMessage: Message = {
-        text: `🎨 Starting NFT generation process for: "${description}"...`,
-        isUser: false,
-        timestamp: new Date()
-      };
-      setMessages(prev => [...prev, generatingMessage]);
+      setIsLoading(true);
       
       // Update progress messages
       const updateProgress = (message: string) => {
@@ -428,7 +473,7 @@ export default function Chat() {
       updateProgress("🖼️ Generating image using AI... (this may take up to a minute)");
       
       // Call the NFT generation service
-      const result = await generateAndMintNFT(description);
+      const result = await nftService.generateAndMintNFT(description);
       
       if (result.success) {
         // Show image preview
@@ -436,9 +481,10 @@ export default function Chat() {
         
         // Add a message with the image preview
         const imagePreviewMessage: Message = {
-          text: `![NFT Preview](${result.imageUrl})`,
+          text: "NFT Preview:",
           isUser: false,
-          timestamp: new Date()
+          timestamp: new Date(),
+          imageUrl: result.imageUrl
         };
         setMessages(prev => [...prev, imagePreviewMessage]);
         
@@ -455,25 +501,30 @@ export default function Chat() {
         // Show minting progress
         updateProgress(`⛓️ Minting NFT on Sonic blockchain...`);
         
-        // Add a success message with the transaction details
-        const successMessage: Message = {
-          text: `🎉 Your NFT has been successfully generated and minted!\n\n` +
-                `Transaction Hash: ${result.transactionHash}\n` +
-                `Explorer Link: ${result.explorerLink}\n\n` +
-                `View your NFT: ${result.imageUrl}`,
-          isUser: false,
-          timestamp: new Date()
-        };
-        setMessages(prev => [...prev, successMessage]);
+        // Mint the NFT
+        try {
+          const mintResponse = await axios.post('http://localhost:8000/api/mint-nft', {
+            uri: result.imageUrl,
+            description: description
+          });
+          
+          if (mintResponse.data.success) {
+            updateProgress(`✅ NFT minted successfully!`);
+            if (mintResponse.data.transaction_hash) {
+              updateProgress(`🔍 Transaction: ${mintResponse.data.transaction_hash}`);
+            }
+            if (mintResponse.data.explorer_link) {
+              updateProgress(`🔍 View on explorer: ${mintResponse.data.explorer_link}`);
+            }
+          } else {
+            updateProgress(`❌ Failed to mint NFT: ${mintResponse.data.error || 'Unknown error'}`);
+          }
+        } catch (error) {
+          console.error('Error minting NFT:', error);
+          updateProgress(`❌ Error minting NFT: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
       } else {
-        // Add an error message
-        const errorMessage: Message = {
-          text: `❌ Failed to generate and mint NFT: ${result.error}`,
-          isUser: false,
-          timestamp: new Date(),
-          isError: true
-        };
-        setMessages(prev => [...prev, errorMessage]);
+        updateProgress(`❌ Failed to generate NFT: ${result.error || 'Unknown error'}`);
       }
     } catch (error) {
       console.error('Error generating NFT:', error);
@@ -484,6 +535,8 @@ export default function Chat() {
         isError: true
       };
       setMessages(prev => [...prev, errorMessage]);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -568,73 +621,229 @@ export default function Chat() {
     return { isNftResponse: false, description: '' };
   };
 
+  // Replace the toggleConversationHistory function
+  const toggleConversationHistory = () => {
+    setShowConversationHistory(prev => !prev);
+  };
+
   return (
     <div className="flex flex-col h-screen bg-gray-100 dark:bg-gray-900">
       {/* Header */}
-      <header className="bg-white dark:bg-gray-800 shadow-sm py-4 px-6 flex items-center justify-between">
-        <div className="flex items-center">
-          <button 
-            onClick={() => navigate('/')}
-            className="mr-4 text-gray-600 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400"
+      <div className="bg-white dark:bg-gray-800 shadow px-6 py-4 flex justify-between items-center">
+        <h1 className="text-xl font-semibold text-gray-800 dark:text-white">SonicLine Assistant</h1>
+        <div className="flex space-x-2">
+          <button
+            onClick={toggleConversationHistory}
+            className={`px-4 py-2 rounded-md text-sm font-medium ${
+              showConversationHistory 
+                ? 'bg-purple-600 text-white hover:bg-purple-700' 
+                : 'bg-gray-200 text-gray-800 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
+            }`}
           >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-            </svg>
+            {showConversationHistory ? 'Hide Communication Logs' : 'Show Communication Logs'}
           </button>
-          <h1 className="text-xl font-semibold text-gray-800 dark:text-white">SonicLine Chat</h1>
-        </div>
-        <button
-          onClick={handleShowWalletCreator}
-          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-sm font-medium transition-colors"
-        >
-          Create Wallet
-        </button>
-      </header>
-
-      {/* Chat Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.map((msg, index) => (
-          <div 
-            key={index} 
-            className={`flex ${msg.isUser ? 'justify-end' : 'justify-start'}`}
-          >
-            <div 
-              className={`max-w-[80%] rounded-lg px-4 py-2 ${
-                msg.isUser 
-                  ? 'bg-indigo-600 text-white rounded-br-none' 
-                  : msg.isError
-                    ? 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 rounded-bl-none shadow-sm'
-                    : 'bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 rounded-bl-none shadow-sm'
-              }`}
+          {privyWallets.length > 0 ? (
+            <div className="flex items-center space-x-2 bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 px-3 py-2 rounded-md">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M2 5a2 2 0 012-2h12a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V5zm3 1h10v1H5V6zm10 3H5v1h10V9zm0 3H5v1h10v-1z" clipRule="evenodd" />
+              </svg>
+              <span className="text-sm truncate max-w-[150px]">{privyWallets[0].address}</span>
+            </div>
+          ) : (
+            <button
+              onClick={handleShowWalletCreator}
+              className="flex items-center space-x-1 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium"
             >
-              <p className="whitespace-pre-wrap">{msg.text}</p>
-              <p className={`text-xs mt-1 ${
-                msg.isUser 
-                  ? 'text-indigo-200' 
-                  : msg.isError
-                    ? 'text-red-500 dark:text-red-400'
-                    : 'text-gray-500 dark:text-gray-400'
-              }`}>
-                {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M2 5a2 2 0 012-2h12a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V5zm3 1h10v1H5V6zm10 3H5v1h10V9zm0 3H5v1h10v-1z" clipRule="evenodd" />
+              </svg>
+              <span>Create Wallet</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Main content */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Chat messages */}
+        <div className={`flex-1 flex flex-col ${showConversationHistory ? 'w-2/3' : 'w-full'}`}>
+          <div className="flex-1 overflow-y-auto p-6">
+            {messages.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full text-gray-500 dark:text-gray-400">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                </svg>
+                <p className="text-lg">Start a conversation with SonicLine</p>
+                <p className="text-sm mt-2">Ask about crypto, create a wallet, or generate an NFT</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {messages.map((message, index) => (
+                  <div 
+                    key={index} 
+                    className={`flex ${message.isUser ? 'justify-end' : 'justify-start'}`}
+                  >
+                    <div 
+                      className={`max-w-[80%] rounded-lg px-4 py-2 ${
+                        message.isUser 
+                          ? 'bg-indigo-600 text-white rounded-br-none' 
+                          : message.isError
+                            ? 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 rounded-bl-none shadow-sm'
+                            : 'bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 rounded-bl-none shadow-sm'
+                      }`}
+                    >
+                      <p className="whitespace-pre-wrap">{message.text}</p>
+                      {message.imageUrl && (
+                        <div className="mt-2">
+                          <img 
+                            src={message.imageUrl} 
+                            alt="NFT Preview" 
+                            className="rounded-md max-w-full h-auto max-h-64 object-contain"
+                          />
+                        </div>
+                      )}
+                      <p className={`text-xs mt-1 ${
+                        message.isUser 
+                          ? 'text-indigo-200' 
+                          : message.isError
+                            ? 'text-red-500 dark:text-red-400'
+                            : 'text-gray-500 dark:text-gray-400'
+                      }`}>
+                        {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+                {isLoading && (
+                  <div className="flex justify-start">
+                    <div className="bg-gray-200 dark:bg-gray-700 rounded-lg p-3 max-w-md">
+                      <div className="flex space-x-2">
+                        <div className="w-3 h-3 bg-gray-400 dark:bg-gray-500 rounded-full animate-bounce"></div>
+                        <div className="w-3 h-3 bg-gray-400 dark:bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                        <div className="w-3 h-3 bg-gray-400 dark:bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                <div ref={messagesEndRef} />
+              </div>
+            )}
+          </div>
+
+          {/* Input area */}
+          <div className="border-t border-gray-200 dark:border-gray-700 p-4 bg-white dark:bg-gray-800">
+            {isCreatingWallet ? (
+              <div className="bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+                <div className="flex items-center">
+                  <div className="mr-3">
+                    <svg className="animate-spin h-5 w-5 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="font-medium text-blue-800 dark:text-blue-200">Creating wallet...</p>
+                    <p className="text-sm text-blue-600 dark:text-blue-300">{isCreatingWallet ? 'Please wait...' : 'Wallet created successfully!'}</p>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="chat-input-container">
+                <input
+                  type="text"
+                  value={inputMessage}
+                  onChange={(e) => setInputMessage(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder={waitingForEmail ? "Enter your email address..." : "Type your message..."}
+                  disabled={isLoading || isCreatingWallet}
+                  className={waitingForEmail ? "email-input" : ""}
+                />
+                
+                {/* Add voice input button */}
+                {voiceSettings.enabled && (
+                  <VoiceInput 
+                    onSpeechResult={handleVoiceInput} 
+                    disabled={isLoading || isCreatingWallet || waitingForEmail}
+                  />
+                )}
+                
+                <button 
+                  onClick={() => handleSend(inputMessage)} 
+                  disabled={isLoading || isCreatingWallet || !inputMessage.trim()}
+                >
+                  {isLoading ? (
+                    <span className="loading-spinner"></span>
+                  ) : (
+                    <svg 
+                      xmlns="http://www.w3.org/2000/svg" 
+                      width="24" 
+                      height="24" 
+                      viewBox="0 0 24 24" 
+                      fill="none" 
+                      stroke="currentColor" 
+                      strokeWidth="2" 
+                      strokeLinecap="round" 
+                      strokeLinejoin="round"
+                    >
+                      <line x1="22" y1="2" x2="11" y2="13"></line>
+                      <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                    </svg>
+                  )}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Communication Logs panel - replace the Conversation History panel */}
+        {showConversationHistory && (
+          <div className="w-1/3 border-l border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 overflow-hidden flex flex-col">
+            <div className="p-4 bg-gray-100 dark:bg-gray-700 border-b border-gray-200 dark:border-gray-600">
+              <h2 className="font-semibold text-gray-800 dark:text-white">Communication Logs</h2>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                All interactions with SonicLine Assistant, including those from other devices
               </p>
             </div>
-          </div>
-        ))}
-        {isLoading && (
-          <div className="flex justify-start">
-            <div className="bg-white dark:bg-gray-800 rounded-lg px-4 py-2 shadow-sm">
-              <div className="flex space-x-2">
-                <div className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                <div className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                <div className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '300ms' }}></div>
-              </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              {communicationLogs.length === 0 ? (
+                <p className="text-gray-500 dark:text-gray-400 text-center mt-4">No communication logs yet</p>
+              ) : (
+                <div className="space-y-3">
+                  {communicationLogs.map((log, index) => (
+                    <div 
+                      key={index} 
+                      className={`p-3 rounded-lg text-sm ${
+                        log.is_user 
+                          ? 'bg-indigo-100 dark:bg-indigo-900 text-indigo-800 dark:text-indigo-200 border-l-4 border-indigo-500' 
+                          : 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 border-l-4 border-gray-500'
+                      }`}
+                    >
+                      <div className="font-medium mb-1">
+                        {log.is_user ? 'User' : 'SonicLine Assistant'}
+                        <span className="text-xs font-normal ml-2 text-gray-500 dark:text-gray-400">
+                          {log.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                        </span>
+                      </div>
+                      <div className="whitespace-pre-wrap">{log.message}</div>
+                      {log.imageUrl && (
+                        <div className="mt-2">
+                          <img 
+                            src={log.imageUrl} 
+                            alt="Image" 
+                            className="rounded-md max-w-full h-auto max-h-48 object-contain"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}
-        <div ref={messagesEndRef} />
       </div>
 
-      {/* Privy Wallet Creator Modal */}
+      {/* Wallet Creator Modal */}
       {showPrivyWalletCreator && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
@@ -656,38 +865,275 @@ export default function Chat() {
         </div>
       )}
 
-      {/* Input Area */}
-      <div className="border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4">
-        <div className="flex items-end space-x-2 max-w-4xl mx-auto">
-          <div className="flex-1 relative">
-            <textarea
-              value={inputMessage}
-              onChange={(e) => setInputMessage(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Type your message..."
-              className="w-full border border-gray-300 dark:border-gray-600 rounded-lg py-3 px-4 pr-12 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-gray-700 dark:text-white text-black"
-              rows={1}
-              style={{ minHeight: '60px', maxHeight: '150px' }}
-            />
-            <div className="absolute right-3 bottom-3 text-gray-400 text-xs">
-              Press Enter to send
-            </div>
-          </div>
-          <button
-            onClick={() => handleSend(inputMessage)}
-            disabled={!inputMessage.trim() || isLoading}
-            className={`p-3 rounded-full ${
-              !inputMessage.trim() || isLoading
-                ? 'bg-gray-300 dark:bg-gray-600 cursor-not-allowed'
-                : 'bg-indigo-600 hover:bg-indigo-700 text-white'
-            } focus:outline-none focus:ring-2 focus:ring-indigo-500`}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+      {/* Add voice settings panel */}
+      <div className="voice-settings-panel">
+        <div className="voice-setting">
+          <label htmlFor="voice-enabled">
+            <svg 
+              xmlns="http://www.w3.org/2000/svg" 
+              width="16" 
+              height="16" 
+              viewBox="0 0 24 24" 
+              fill="none" 
+              stroke="currentColor" 
+              strokeWidth="2" 
+              strokeLinecap="round" 
+              strokeLinejoin="round"
+            >
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+              <line x1="12" y1="19" x2="12" y2="23"></line>
+              <line x1="8" y1="23" x2="16" y2="23"></line>
             </svg>
-          </button>
+            Voice features
+          </label>
+          <div className="toggle-switch">
+            <input
+              id="voice-enabled"
+              type="checkbox"
+              checked={voiceSettings.enabled}
+              onChange={toggleVoiceEnabled}
+            />
+            <label htmlFor="voice-enabled"></label>
+          </div>
         </div>
+        
+        <div className="voice-setting">
+          <label htmlFor="auto-play">
+            <svg 
+              xmlns="http://www.w3.org/2000/svg" 
+              width="16" 
+              height="16" 
+              viewBox="0 0 24 24" 
+              fill="none" 
+              stroke="currentColor" 
+              strokeWidth="2" 
+              strokeLinecap="round" 
+              strokeLinejoin="round"
+            >
+              <polygon points="5 3 19 12 5 21 5 3"></polygon>
+            </svg>
+            Auto-play responses
+          </label>
+          <div className="toggle-switch">
+            <input
+              id="auto-play"
+              type="checkbox"
+              checked={voiceSettings.autoPlayResponses}
+              onChange={toggleAutoPlayResponses}
+              disabled={!voiceSettings.enabled}
+            />
+            <label htmlFor="auto-play"></label>
+          </div>
+        </div>
+        
+        {isSpeaking && (
+          <div className="speaking-indicator">
+            <div className="speaking-waves">
+              <span></span>
+              <span></span>
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
+            Speaking...
+          </div>
+        )}
       </div>
+      
+      <style>
+        {`
+        /* Existing styles... */
+        
+        .chat-input-container {
+          display: flex;
+          align-items: center;
+          padding: 10px;
+          border-top: 1px solid #e0e0e0;
+          background-color: #fff;
+        }
+        
+        .chat-input-container input {
+          flex: 1;
+          padding: 10px 15px;
+          border: 1px solid #ddd;
+          border-radius: 20px;
+          font-size: 14px;
+          outline: none;
+          transition: border-color 0.2s;
+        }
+        
+        .chat-input-container input:focus {
+          border-color: #007bff;
+        }
+        
+        .chat-input-container button {
+          background: #007bff;
+          color: white;
+          border: none;
+          border-radius: 50%;
+          width: 40px;
+          height: 40px;
+          margin-left: 10px;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: background-color 0.2s;
+        }
+        
+        .chat-input-container button:hover {
+          background: #0069d9;
+        }
+        
+        .chat-input-container button:disabled {
+          background: #cccccc;
+          cursor: not-allowed;
+        }
+        
+        .loading-spinner {
+          display: inline-block;
+          width: 20px;
+          height: 20px;
+          border: 2px solid rgba(255,255,255,0.3);
+          border-radius: 50%;
+          border-top-color: white;
+          animation: spin 1s ease-in-out infinite;
+        }
+        
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+        
+        /* Voice settings styles */
+        .voice-settings-panel {
+          padding: 10px 15px;
+          background-color: #f8f9fa;
+          border-top: 1px solid #e0e0e0;
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+        
+        .voice-setting {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          font-size: 14px;
+        }
+        
+        .voice-setting label {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          color: #555;
+          cursor: pointer;
+        }
+        
+        .toggle-switch {
+          position: relative;
+          display: inline-block;
+          width: 40px;
+          height: 20px;
+        }
+        
+        .toggle-switch input {
+          opacity: 0;
+          width: 0;
+          height: 0;
+        }
+        
+        .toggle-switch label {
+          position: absolute;
+          cursor: pointer;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background-color: #ccc;
+          transition: .4s;
+          border-radius: 34px;
+        }
+        
+        .toggle-switch label:before {
+          position: absolute;
+          content: "";
+          height: 16px;
+          width: 16px;
+          left: 2px;
+          bottom: 2px;
+          background-color: white;
+          transition: .4s;
+          border-radius: 50%;
+        }
+        
+        .toggle-switch input:checked + label {
+          background-color: #2196F3;
+        }
+        
+        .toggle-switch input:checked + label:before {
+          transform: translateX(20px);
+        }
+        
+        .toggle-switch input:disabled + label {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+        
+        .speaking-indicator {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          color: #2196F3;
+          font-size: 14px;
+          font-weight: 500;
+          padding: 5px 10px;
+          background-color: rgba(33, 150, 243, 0.1);
+          border-radius: 4px;
+        }
+        
+        .speaking-waves {
+          display: flex;
+          align-items: center;
+          height: 20px;
+        }
+        
+        .speaking-waves span {
+          display: inline-block;
+          width: 3px;
+          height: 100%;
+          margin-right: 3px;
+          background-color: #2196F3;
+          border-radius: 3px;
+          animation: wave 1s ease-in-out infinite;
+        }
+        
+        .speaking-waves span:nth-child(2) {
+          animation-delay: 0.1s;
+        }
+        
+        .speaking-waves span:nth-child(3) {
+          animation-delay: 0.2s;
+        }
+        
+        .speaking-waves span:nth-child(4) {
+          animation-delay: 0.3s;
+        }
+        
+        .speaking-waves span:nth-child(5) {
+          animation-delay: 0.4s;
+        }
+        
+        @keyframes wave {
+          0%, 100% {
+            height: 6px;
+          }
+          50% {
+            height: 16px;
+          }
+        }
+        `}
+      </style>
     </div>
   )
 }

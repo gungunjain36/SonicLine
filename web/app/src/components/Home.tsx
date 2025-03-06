@@ -11,7 +11,11 @@ const Home = () => {
   }
 
   const handleGoToChat = () => {
-    navigate('/chat')
+    navigate('/agent/chat')
+  }
+
+  const handleGoToTwilioCalls = () => {
+    navigate('/twilio/calls')
   }
 
   return (
@@ -36,10 +40,21 @@ const Home = () => {
           >
             Create Wallet
           </button>
+          <button
+            onClick={handleGoToTwilioCalls}
+            className="px-8 py-3 bg-purple-600 hover:bg-purple-700 rounded-lg text-lg font-medium transition-colors shadow-lg"
+          >
+            Twilio Calls
+          </button>
         </div>
         <div className="bg-indigo-800 bg-opacity-40 p-4 rounded-lg max-w-2xl mx-auto">
           <p className="text-md text-indigo-200">
             <span className="font-bold">Instant Wallet Creation:</span> Simply type "create a wallet for me" in the chat and get your wallet instantly - no login required!
+          </p>
+        </div>
+        <div className="bg-indigo-800 bg-opacity-40 p-4 rounded-lg max-w-2xl mx-auto mt-4">
+          <p className="text-md text-indigo-200">
+            <span className="font-bold">Voice Interaction:</span> Call +14149287603 from your phone to interact with SonicLine using voice!
           </p>
         </div>
       </div>
