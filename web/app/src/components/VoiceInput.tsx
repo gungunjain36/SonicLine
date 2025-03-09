@@ -2,11 +2,18 @@ import React, { useState, useEffect, useRef } from 'react';
 import { speechToText } from '../utils/elevenLabsService';
 
 interface VoiceInputProps {
-  onSpeechResult: (text: string) => void;
+  onInterimResult?: (text: string) => void;
+  onFinalResult: (text: string) => void;
+  onError?: (error: string) => void;
   disabled?: boolean;
 }
 
-const VoiceInput: React.FC<VoiceInputProps> = ({ onSpeechResult, disabled = false }) => {
+const VoiceInput: React.FC<VoiceInputProps> = ({ 
+  onInterimResult, 
+  onFinalResult, 
+  onError,
+  disabled = false 
+}) => {
   const [isListening, setIsListening] = useState(false);
   const [interimText, setInterimText] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -18,11 +25,12 @@ const VoiceInput: React.FC<VoiceInputProps> = ({ onSpeechResult, disabled = fals
       // Interim results callback
       (text) => {
         setInterimText(text);
+        if (onInterimResult) onInterimResult(text);
       },
       // Final result callback
       (text) => {
         if (text.trim()) {
-          onSpeechResult(text.trim());
+          onFinalResult(text.trim());
           setIsListening(false);
         }
         setInterimText('');
@@ -31,16 +39,21 @@ const VoiceInput: React.FC<VoiceInputProps> = ({ onSpeechResult, disabled = fals
       (errorMessage) => {
         setError(errorMessage);
         setIsListening(false);
+        if (onError) onError(errorMessage);
       }
     );
 
     // Cleanup on unmount
     return () => {
-      if (isListening && recognitionRef.current) {
-        recognitionRef.current.stop();
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (e) {
+          console.error('Error stopping speech recognition:', e);
+        }
       }
     };
-  }, [onSpeechResult]);
+  }, [onInterimResult, onFinalResult, onError]);
 
   const toggleListening = () => {
     if (disabled) return;

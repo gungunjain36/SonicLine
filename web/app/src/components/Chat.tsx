@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 import { usePrivy, useCreateWallet, useWallets } from '@privy-io/react-auth';
 import PrivyWalletCreator from './PrivyWalletCreator';
-// @ts-expect-error
+// @ts-expect-error - Missing type definitions for nftService
 import * as nftService from '../utils/nftService';
 import VoiceInput from './VoiceInput';
 import { textToSpeech, playAudio } from '../utils/elevenLabsService';
@@ -10,16 +10,17 @@ import { textToSpeech, playAudio } from '../utils/elevenLabsService';
 interface Message {
   text: string;
   isUser: boolean;
-  isError?: boolean;
+  is_user?: boolean;
   timestamp: Date;
   isEmailInput?: boolean;
   imageUrl?: string;
+  isError?: boolean;
 }
 
 interface CommunicationLog {
-  timestamp: Date;
-  is_user: boolean;
   message: string;
+  isUser: boolean;
+  timestamp: Date;
   imageUrl?: string;
 }
 
@@ -36,7 +37,32 @@ interface VoiceSettings {
   autoPlayResponses: boolean;
 }
 
-export default function Chat() {
+// Add interface for UI mode
+interface UiMode {
+  chatVisible: boolean;
+  voiceOnly: boolean;
+}
+
+// Add interface for tracking actions
+interface ActionUsage {
+  name: string;
+  description: string;
+  timestamp: Date;
+}
+
+// Define the type for the API response
+interface ApiResponse {
+  message: string;
+  response: string;
+  logs: Array<{
+    timestamp: string;
+    is_user: boolean;
+    message: string;
+    imageUrl?: string;
+  }>;
+}
+
+const Chat: React.FC = () => {
   const { authenticated, login, user } = usePrivy();
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -54,8 +80,31 @@ export default function Chat() {
   const [showConversationHistory, setShowConversationHistory] = useState(false);
   const [communicationLogs, setCommunicationLogs] = useState<CommunicationLog[]>([]);
   
+  // Add new state for UI mode
+  const [uiMode, setUiMode] = useState<UiMode>({
+    chatVisible: true,
+    voiceOnly: false
+  });
+  
+  // Add state for tracking actions
+  const [usedActions, setUsedActions] = useState<ActionUsage[]>([]);
+  const [availableActions, setAvailableActions] = useState<string[]>([
+    'get-token-by-ticker',
+    'get-sonic-balance',
+    'send-sonic',
+    'send-sonic-token',
+    'swap-sonic',
+    'get-token-price',
+    'get-transaction-history',
+    'add-liquidity',
+    'remove-liquidity',
+    'get-pool-info',
+    'estimate-swap',
+    'create-wallet',
+    'mint-nft'
+  ]);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const { createWallet } = useCreateWallet();
   const { wallets: privyWallets } = useWallets();
 
@@ -80,7 +129,7 @@ export default function Chat() {
           if (response.data && response.data.logs) {
             setCommunicationLogs(response.data.logs.map((log: any) => ({
               timestamp: new Date(log.timestamp),
-              is_user: log.is_user,
+              isUser: log.is_user,
               message: log.message,
               imageUrl: log.imageUrl
             })));
@@ -97,6 +146,20 @@ export default function Chat() {
     }
   }, [showConversationHistory]);
 
+  // Use the availableActions state
+  useEffect(() => {
+    // Initialize available actions
+    setAvailableActions([
+      'get-token-by-ticker',
+      'get-sonic-balance',
+      'send-sonic',
+      'swap-sonic',
+      'get-transaction-history',
+      'create-wallet',
+      'mint-nft'
+    ]);
+  }, []);
+
   // Add a function to handle voice input
   const handleVoiceInput = (text: string) => {
     if (text.trim()) {
@@ -106,98 +169,94 @@ export default function Chat() {
   };
 
   // Modify the handleSend function to include voice feedback
-  function handleSend(message: string) {
+  const handleSend = async (message: string) => {
     if (!message.trim()) return;
-    
-    // If we're waiting for an email address, handle it differently
-    if (waitingForEmail) {
-      // Add the user's message (email) to the chat
-      const userMessage: Message = {
-        text: message,
-        isUser: true,
-        timestamp: new Date()
-      };
-      setMessages(prev => [...prev, userMessage]);
-      
-      // Process the email
-      handleEmailLogin(message);
-      return;
-    }
-    
-    // Check if the message is an NFT generation request
-    const { isRequest, description } = isNftGenerationRequest(message);
-    
-    // Special case for "car riding on a horse"
-    const isSpecialCase = /nft.*car.*horse/i.test(message) || /car.*riding.*horse/i.test(message);
-    
-    // Regular message handling
+
+    // Add user message
     const userMessage: Message = {
       text: message,
       isUser: true,
       timestamp: new Date()
     };
     setMessages(prev => [...prev, userMessage]);
-    setInputMessage("");
-    
-    // If it's an NFT generation request, handle it directly
-    if (isRequest && description) {
-      console.log(`🎨 Handling NFT generation request directly: "${description}"`);
-      handleNftGeneration(description);
-      return;
-    }
-    
-    // Handle special case
-    if (isSpecialCase) {
-      console.log(`🎨 Handling special case NFT request: "a car riding on a horse"`);
-      handleNftGeneration("a car riding on a horse");
-      return;
-    }
-    
+    setInputMessage('');
     setIsLoading(true);
-    
-    // Send to API
-    console.log(`📤 Sending message to API: "${message}"`);
-    axios.post("http://localhost:8000/agent/chat", { message: message })
-      .then((response) => {
-        console.log("📥 Received response:", response.data);
-        
-        if (response.data && response.data.response) {
-          const botMessage: Message = {
-            text: response.data.response,
-            isUser: false,
-            timestamp: new Date()
-          };
-          
-          setMessages(prev => [...prev, botMessage]);
-          
-          // Check if the response indicates an NFT request
-          const { isNftResponse, description } = checkAgentResponseForNftRequest(response.data.response);
-          
-          if (isNftResponse && description) {
-            console.log(`🎨 Detected NFT request in response: "${description}"`);
-            handleNftGeneration(description);
-          }
-          
-          // Convert response to speech if voice is enabled
-          if (voiceSettings.enabled && voiceSettings.autoPlayResponses) {
-            speakText(response.data.response);
-          }
-        }
-      })
-      .catch((error) => {
-        console.error("Error sending message:", error);
-        const errorMessage: Message = {
-          text: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          isUser: false,
-          timestamp: new Date(),
-          isError: true
-        };
-        setMessages(prev => [...prev, errorMessage]);
-      })
-      .finally(() => {
-        setIsLoading(false);
+
+    // Check if this is an email login request
+    if (waitingForEmail) {
+      handleEmailLogin(message);
+      return;
+    }
+
+    // Check if this is an NFT generation request
+    const nftRequest = isNftGenerationRequest(message);
+    if (nftRequest.isRequest) {
+      handleNftGeneration(nftRequest.description);
+      simulateActionUsage('mint-nft');
+      return;
+    }
+
+    // Simulate action usage based on message content
+    if (message.toLowerCase().includes('balance')) {
+      simulateActionUsage('get-sonic-balance');
+    } else if (message.toLowerCase().includes('price')) {
+      simulateActionUsage('get-token-price');
+    } else if (message.toLowerCase().includes('swap')) {
+      simulateActionUsage('swap-sonic');
+    } else if (message.toLowerCase().includes('transaction') || message.toLowerCase().includes('history')) {
+      simulateActionUsage('get-transaction-history');
+    } else if (message.toLowerCase().includes('wallet')) {
+      simulateActionUsage('create-wallet');
+    }
+
+    // Send to backend
+    try {
+      const response = await fetch('http://localhost:8000/agent/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ message: message }),
       });
-  }
+
+      if (response.ok) {
+        const data: ApiResponse = await response.json();
+        setIsLoading(false);
+        
+        // Add assistant message
+        const assistantMessage: Message = {
+          text: data.response,
+          isUser: false,
+          timestamp: new Date()
+        };
+        setMessages(prev => [...prev, assistantMessage]);
+        
+        // Check if the response indicates an NFT request
+        const nftResponse = checkAgentResponseForNftRequest(data.response);
+        if (nftResponse.isNftResponse) {
+          handleNftGeneration(nftResponse.description);
+          simulateActionUsage('mint-nft');
+        }
+        
+        // Auto-play response if enabled
+        if (voiceSettings.enabled && voiceSettings.autoPlayResponses) {
+          speakText(data.response);
+        }
+      }
+    } catch (error) {
+      setIsLoading(false);
+      console.error('Error:', error);
+      
+      // Add error message
+      const errorMessage: Message = {
+        text: "Sorry, there was an error processing your request. Please try again.",
+        isUser: false,
+        timestamp: new Date(),
+        isError: true
+      };
+      setMessages(prev => [...prev, errorMessage]);
+    }
+  };
 
   // Add a function to speak text using Eleven Labs
   const speakText = async (text: string) => {
@@ -227,7 +286,53 @@ export default function Chat() {
     }));
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  // Add function to toggle chat visibility
+  const toggleChatVisibility = () => {
+    setUiMode(prev => ({
+      ...prev,
+      chatVisible: !prev.chatVisible
+    }));
+  };
+
+  // Add function to toggle voice-only mode
+  const toggleVoiceOnlyMode = () => {
+    setUiMode(prev => ({
+      ...prev,
+      voiceOnly: !prev.voiceOnly,
+      // If enabling voice-only, make sure chat is visible
+      chatVisible: prev.voiceOnly ? prev.chatVisible : true
+    }));
+  };
+
+  // Add function to simulate action usage (for demo purposes)
+  const simulateActionUsage = (actionName: string) => {
+    const actionDescriptions: Record<string, string> = {
+      'get-token-by-ticker': 'Get token address by ticker symbol',
+      'get-sonic-balance': 'Get $S or token balance',
+      'send-sonic': 'Send $S tokens to an address',
+      'send-sonic-token': 'Send a token on Sonic to an address',
+      'swap-sonic': 'Swap tokens on Sonic DEX',
+      'get-token-price': 'Get current price of a token in USD or another base currency',
+      'get-transaction-history': 'Get transaction history for an address',
+      'add-liquidity': 'Add liquidity to a pool on Sonic',
+      'remove-liquidity': 'Remove liquidity from a pool on Sonic',
+      'get-pool-info': 'Get information about a liquidity pool',
+      'estimate-swap': 'Estimate the output amount for a token swap without executing it',
+      'create-wallet': 'Create a wallet using the Privy API',
+      'mint-nft': 'Mint an NFT on Sonic'
+    };
+    
+    setUsedActions(prev => [
+      ...prev, 
+      {
+        name: actionName,
+        description: actionDescriptions[actionName] || 'Unknown action',
+        timestamp: new Date()
+      }
+    ]);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend(inputMessage);
@@ -390,8 +495,6 @@ export default function Chat() {
       
       if (errorMessage.includes('authenticated') || errorMessage.includes('auth')) {
         // Handle authentication error
-        handleWalletCreation(chainType);
-        
         const authErrorMessage: Message = {
           text: "To create a wallet, you need to authenticate first. Don't worry, it's quick and easy!",
           isUser: false,
@@ -626,176 +729,376 @@ export default function Chat() {
     setShowConversationHistory(prev => !prev);
   };
 
+  // Add a keyboard shortcut to toggle voice-only mode
+  useEffect(() => {
+    const handleKeyPress = (e: KeyboardEvent) => {
+      // Alt+V to toggle voice-only mode
+      if (e.altKey && e.key === 'v') {
+        toggleVoiceOnlyMode();
+      }
+    };
+    
+    window.addEventListener('keydown', handleKeyPress);
+    return () => {
+      window.removeEventListener('keydown', handleKeyPress);
+    };
+  }, []);
+
   return (
     <div className="flex flex-col h-screen bg-gray-100 dark:bg-gray-900">
       {/* Header */}
       <div className="bg-white dark:bg-gray-800 shadow px-6 py-4 flex justify-between items-center">
         <h1 className="text-xl font-semibold text-gray-800 dark:text-white">SonicLine Assistant</h1>
         <div className="flex space-x-2">
-          <button
-            onClick={toggleConversationHistory}
-            className={`px-4 py-2 rounded-md text-sm font-medium ${
-              showConversationHistory 
-                ? 'bg-purple-600 text-white hover:bg-purple-700' 
+          <button 
+            onClick={toggleVoiceOnlyMode}
+            className={`px-4 py-2 rounded-sm text-sm font-medium ${
+              uiMode.voiceOnly 
+                ? 'bg-black text-white hover:bg-gray-900' 
                 : 'bg-gray-200 text-gray-800 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
             }`}
           >
-            {showConversationHistory ? 'Hide Communication Logs' : 'Show Communication Logs'}
+            {uiMode.voiceOnly ? 'Voice Mode' : 'Chat Mode'}
+          </button>
+          <button
+            onClick={toggleChatVisibility}
+            className={`px-4 py-2 rounded-sm text-sm font-medium ${
+              uiMode.chatVisible 
+                ? 'bg-gray-200 text-gray-800 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600' 
+                : 'bg-black text-white hover:bg-gray-900'
+            }`}
+            disabled={uiMode.voiceOnly}
+          >
+            {uiMode.chatVisible ? 'Hide Chat' : 'Show Chat'}
+          </button>
+          <button
+            onClick={toggleConversationHistory}
+            className={`px-4 py-2 rounded-sm text-sm font-medium ${
+              showConversationHistory 
+                ? 'bg-black text-white hover:bg-gray-900' 
+                : 'bg-gray-200 text-gray-800 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
+            }`}
+          >
+            {showConversationHistory ? 'Hide Logs' : 'Show Logs'}
           </button>
           {privyWallets.length > 0 ? (
-            <div className="flex items-center space-x-2 bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 px-3 py-2 rounded-md">
+            <div className="flex items-center space-x-2 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 px-3 py-2 rounded-sm">
               <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
                 <path fillRule="evenodd" d="M2 5a2 2 0 012-2h12a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V5zm3 1h10v1H5V6zm10 3H5v1h10V9zm0 3H5v1h10v-1z" clipRule="evenodd" />
               </svg>
               <span className="text-sm truncate max-w-[150px]">{privyWallets[0].address}</span>
-            </div>
+        </div>
           ) : (
-            <button
-              onClick={handleShowWalletCreator}
-              className="flex items-center space-x-1 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium"
-            >
+        <button
+          onClick={handleShowWalletCreator}
+              className="flex items-center space-x-1 bg-black hover:bg-gray-900 text-white px-4 py-2 rounded-sm text-sm font-medium"
+        >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
                 <path fillRule="evenodd" d="M2 5a2 2 0 012-2h12a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V5zm3 1h10v1H5V6zm10 3H5v1h10V9zm0 3H5v1h10v-1z" clipRule="evenodd" />
               </svg>
               <span>Create Wallet</span>
-            </button>
+        </button>
           )}
         </div>
       </div>
 
       {/* Main content */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Chat messages */}
-        <div className={`flex-1 flex flex-col ${showConversationHistory ? 'w-2/3' : 'w-full'}`}>
-          <div className="flex-1 overflow-y-auto p-6">
-            {messages.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full text-gray-500 dark:text-gray-400">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
-                </svg>
-                <p className="text-lg">Start a conversation with SonicLine</p>
-                <p className="text-sm mt-2">Ask about crypto, create a wallet, or generate an NFT</p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {messages.map((message, index) => (
-                  <div 
-                    key={index} 
-                    className={`flex ${message.isUser ? 'justify-end' : 'justify-start'}`}
-                  >
-                    <div 
-                      className={`max-w-[80%] rounded-lg px-4 py-2 ${
-                        message.isUser 
-                          ? 'bg-indigo-600 text-white rounded-br-none' 
-                          : message.isError
-                            ? 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 rounded-bl-none shadow-sm'
-                            : 'bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 rounded-bl-none shadow-sm'
-                      }`}
-                    >
-                      <p className="whitespace-pre-wrap">{message.text}</p>
-                      {message.imageUrl && (
-                        <div className="mt-2">
-                          <img 
-                            src={message.imageUrl} 
-                            alt="NFT Preview" 
-                            className="rounded-md max-w-full h-auto max-h-64 object-contain"
-                          />
-                        </div>
-                      )}
-                      <p className={`text-xs mt-1 ${
-                        message.isUser 
-                          ? 'text-indigo-200' 
-                          : message.isError
-                            ? 'text-red-500 dark:text-red-400'
-                            : 'text-gray-500 dark:text-gray-400'
-                      }`}>
-                        {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </p>
+        {/* Voice-only mode or Chat mode */}
+        {uiMode.voiceOnly ? (
+          <div className="flex-1 flex flex-col items-center justify-center p-6">
+            <div className="w-full max-w-4xl flex flex-col md:flex-row gap-6">
+              {/* Central voice input area */}
+              <div className="flex-1 flex flex-col items-center justify-center bg-white dark:bg-gray-800 rounded-sm shadow p-8">
+                <h2 className="text-2xl font-semibold mb-6 text-gray-800 dark:text-white">Sonic Voice Assistant</h2>
+                <p className="text-gray-600 dark:text-gray-300 mb-8 text-center">
+                  Click the microphone and say "Hey Sonic" to start a conversation
+                </p>
+                
+                <div className="voice-button-container mb-8">
+                  {voiceSettings.enabled && (
+                    <div className="scale-150 mb-4">
+                      <VoiceInput 
+                        onInterimResult={() => {}}
+                        onFinalResult={handleVoiceInput}
+                        onError={(error: string) => console.error('Voice input error:', error)}
+                      />
                     </div>
-                  </div>
-                ))}
-                {isLoading && (
-                  <div className="flex justify-start">
-                    <div className="bg-gray-200 dark:bg-gray-700 rounded-lg p-3 max-w-md">
-                      <div className="flex space-x-2">
-                        <div className="w-3 h-3 bg-gray-400 dark:bg-gray-500 rounded-full animate-bounce"></div>
-                        <div className="w-3 h-3 bg-gray-400 dark:bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-                        <div className="w-3 h-3 bg-gray-400 dark:bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></div>
+                  )}
+                  
+                  {isSpeaking && (
+                    <div className="speaking-indicator mt-4">
+                      <div className="speaking-waves">
+                        <div className="wave"></div>
+                        <div className="wave"></div>
+                        <div className="wave"></div>
                       </div>
+                      <span>Speaking...</span>
                     </div>
+                  )}
+                </div>
+                
+                {/* Last message display */}
+                {messages.length > 0 && (
+                  <div className="w-full bg-gray-50 dark:bg-gray-700 p-4 rounded-sm">
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">Last message:</p>
+                    <p className="text-gray-800 dark:text-gray-200">
+                      {messages[messages.length - 1].text}
+                    </p>
                   </div>
                 )}
-                <div ref={messagesEndRef} />
               </div>
-            )}
-          </div>
-
-          {/* Input area */}
-          <div className="border-t border-gray-200 dark:border-gray-700 p-4 bg-white dark:bg-gray-800">
-            {isCreatingWallet ? (
-              <div className="bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
-                <div className="flex items-center">
-                  <div className="mr-3">
-                    <svg className="animate-spin h-5 w-5 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                  </div>
-                  <div>
-                    <p className="font-medium text-blue-800 dark:text-blue-200">Creating wallet...</p>
-                    <p className="text-sm text-blue-600 dark:text-blue-300">{isCreatingWallet ? 'Please wait...' : 'Wallet created successfully!'}</p>
+              
+              {/* Actions panel */}
+              <div className="md:w-1/3 bg-white dark:bg-gray-800 rounded-sm shadow p-6">
+                <h3 className="text-lg font-semibold mb-4 text-gray-800 dark:text-white">Actions</h3>
+                
+                {/* Used actions */}
+                <div className="mb-6">
+                  <h4 className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">Recently Used:</h4>
+                  {usedActions.length === 0 ? (
+                    <p className="text-sm text-gray-500 dark:text-gray-400">No actions used yet</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {usedActions.slice(-5).reverse().map((action, index) => (
+                        <div key={index} className="bg-gray-50 dark:bg-gray-700 p-2 rounded-sm">
+                          <div className="flex justify-between">
+                            <span className="text-sm font-medium text-gray-800 dark:text-gray-200">{action.name}</span>
+                            <span className="text-xs text-gray-500 dark:text-gray-400">
+                              {action.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+                          <p className="text-xs text-gray-600 dark:text-gray-300">{action.description}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                
+                {/* Available actions */}
+                <div>
+                  <h4 className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">Available Actions:</h4>
+                  <div className="grid grid-cols-1 gap-1">
+                    {availableActions.map((action, index) => (
+          <div 
+            key={index} 
+                        className="text-xs px-2 py-1 bg-gray-50 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-sm"
+                      >
+                        {action}
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>
-            ) : (
-              <div className="chat-input-container">
-                <input
-                  type="text"
-                  value={inputMessage}
-                  onChange={(e) => setInputMessage(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder={waitingForEmail ? "Enter your email address..." : "Type your message..."}
-                  disabled={isLoading || isCreatingWallet}
-                  className={waitingForEmail ? "email-input" : ""}
-                />
-                
-                {/* Add voice input button */}
-                {voiceSettings.enabled && (
-                  <VoiceInput 
-                    onSpeechResult={handleVoiceInput} 
-                    disabled={isLoading || isCreatingWallet || waitingForEmail}
-                  />
-                )}
-                
-                <button 
-                  onClick={() => handleSend(inputMessage)} 
-                  disabled={isLoading || isCreatingWallet || !inputMessage.trim()}
-                >
-                  {isLoading ? (
-                    <span className="loading-spinner"></span>
+            </div>
+          </div>
+        ) : (
+          // Regular chat mode
+          <div className={`flex-1 flex flex-col ${showConversationHistory ? 'w-2/3' : 'w-full'}`}>
+            {uiMode.chatVisible ? (
+              <>
+                <div className="flex-1 overflow-y-auto p-6">
+                  {messages.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-full text-gray-500 dark:text-gray-400">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                      </svg>
+                      <p className="text-lg font-medium">No messages yet</p>
+                      <p className="text-sm">Start a conversation with SonicLine Assistant</p>
+                    </div>
                   ) : (
-                    <svg 
-                      xmlns="http://www.w3.org/2000/svg" 
-                      width="24" 
-                      height="24" 
-                      viewBox="0 0 24 24" 
-                      fill="none" 
-                      stroke="currentColor" 
-                      strokeWidth="2" 
-                      strokeLinecap="round" 
-                      strokeLinejoin="round"
-                    >
-                      <line x1="22" y1="2" x2="11" y2="13"></line>
-                      <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-                    </svg>
+                    messages.map((message, index) => (
+                      <div 
+                        key={index} 
+                        className={`mb-4 ${message.isUser ? 'text-right' : 'text-left'}`}
+                      >
+                        <div 
+                          className={`inline-block max-w-[80%] p-4 rounded-sm ${
+                            message.isUser 
+                              ? 'bg-black text-white' 
+                              : 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-white'
+                          }`}
+                        >
+                          <div className="whitespace-pre-wrap">{message.text}</div>
+                          {message.imageUrl && (
+                            <div className="mt-2">
+                              <img 
+                                src={message.imageUrl} 
+                                alt="Generated image" 
+                                className="rounded-sm max-w-full h-auto"
+                              />
+                            </div>
+                          )}
+                        </div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                          {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </div>
+                      </div>
+                    ))
                   )}
-                </button>
+                  <div ref={messagesEndRef}></div>
+                </div>
+                
+                {/* Input area */}
+                <div className="p-4 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+                  {waitingForEmail ? (
+                    <div className="flex items-end space-x-2">
+                      <div className="flex-1 relative">
+                        <textarea
+                          className="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-sm bg-white dark:bg-gray-700 text-gray-800 dark:text-white resize-none focus:outline-none focus:ring-1 focus:ring-gray-400 dark:focus:ring-gray-500"
+                          placeholder="Enter your email address..."
+                          value={inputMessage}
+                          onChange={(e) => setInputMessage(e.target.value)}
+                          onKeyDown={handleKeyDown}
+                          rows={1}
+                          style={{ minHeight: '44px', maxHeight: '200px' }}
+                        />
+                        
+                        {/* Voice input button */}
+                        {voiceSettings.enabled && (
+                          <div className="absolute right-2 bottom-2">
+                            <VoiceInput 
+                              onInterimResult={() => {}}
+                              onFinalResult={handleVoiceInput}
+                              onError={(error: string) => console.error('Voice input error:', error)}
+                            />
+                          </div>
+                        )}
+                      </div>
+                      
+                      <button
+                        className="p-3 bg-black hover:bg-gray-900 text-white rounded-sm flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                        onClick={() => handleSend(inputMessage)}
+                        disabled={isLoading || !inputMessage.trim()}
+                      >
+                        {isLoading ? (
+                          <div className="loading-spinner"></div>
+                        ) : (
+                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="22" y1="2" x2="11" y2="13"></line>
+                            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                          </svg>
+                        )}
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-end space-x-2">
+                      <div className="flex-1 relative">
+                        <textarea
+                          className="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-sm bg-white dark:bg-gray-700 text-gray-800 dark:text-white resize-none focus:outline-none focus:ring-1 focus:ring-gray-400 dark:focus:ring-gray-500"
+                          placeholder="Type your message..."
+                          value={inputMessage}
+                          onChange={(e) => setInputMessage(e.target.value)}
+                          onKeyDown={handleKeyDown}
+                          rows={1}
+                          style={{ minHeight: '44px', maxHeight: '200px' }}
+                        />
+                        
+                        {/* Voice input button */}
+                        {voiceSettings.enabled && (
+                          <div className="absolute right-2 bottom-2">
+                            <VoiceInput 
+                              onInterimResult={() => {}}
+                              onFinalResult={handleVoiceInput}
+                              onError={(error: string) => console.error('Voice input error:', error)}
+                            />
+                          </div>
+                        )}
+                      </div>
+                      
+                      <button
+                        className="p-3 bg-black hover:bg-gray-900 text-white rounded-sm flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                        onClick={() => handleSend(inputMessage)}
+                        disabled={isLoading || !inputMessage.trim()}
+                      >
+                        {isLoading ? (
+                          <div className="loading-spinner"></div>
+                        ) : (
+                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="22" y1="2" x2="11" y2="13"></line>
+                            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                          </svg>
+                        )}
+                      </button>
+                    </div>
+                  )}
+                  
+                  {/* Speaking indicator */}
+                  {isSpeaking && (
+                    <div className="speaking-indicator mt-2">
+                      <div className="speaking-waves">
+                        <div className="wave"></div>
+                        <div className="wave"></div>
+                        <div className="wave"></div>
+                      </div>
+                      <span>Speaking...</span>
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="flex-1 flex flex-col p-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {/* Dashboard Cards */}
+                  <div className="bg-white dark:bg-gray-800 rounded-sm shadow p-6">
+                    <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Voice Features</h3>
+                    <div className="space-y-4">
+                      <div className="flex justify-between items-center">
+                        <span className="text-gray-600 dark:text-gray-300">Voice Enabled</span>
+                        <span className={`px-2 py-1 rounded-sm text-xs font-medium ${voiceSettings.enabled ? 'bg-gray-900 text-white' : 'bg-gray-200 text-gray-800'}`}>
+                          {voiceSettings.enabled ? 'ON' : 'OFF'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-gray-600 dark:text-gray-300">Auto-Play Responses</span>
+                        <span className={`px-2 py-1 rounded-sm text-xs font-medium ${voiceSettings.autoPlayResponses ? 'bg-gray-900 text-white' : 'bg-gray-200 text-gray-800'}`}>
+                          {voiceSettings.autoPlayResponses ? 'ON' : 'OFF'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="bg-white dark:bg-gray-800 rounded-sm shadow p-6">
+                    <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Wallet Status</h3>
+                    <div className="space-y-4">
+                      <div className="flex justify-between items-center">
+                        <span className="text-gray-600 dark:text-gray-300">Connected Wallet</span>
+                        <span className={`px-2 py-1 rounded-sm text-xs font-medium ${privyWallets.length > 0 ? 'bg-gray-900 text-white' : 'bg-gray-200 text-gray-800'}`}>
+                          {privyWallets.length > 0 ? 'YES' : 'NO'}
+                        </span>
+                      </div>
+                      {privyWallets.length > 0 && (
+                        <div className="text-sm text-gray-500 dark:text-gray-400 break-all">
+                          {privyWallets[0].address}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  
+                  <div className="bg-white dark:bg-gray-800 rounded-sm shadow p-6">
+                    <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Recent Actions</h3>
+                    <div className="space-y-2">
+                      {usedActions.length === 0 ? (
+                        <p className="text-sm text-gray-500 dark:text-gray-400">No actions used yet</p>
+                      ) : (
+                        usedActions.slice(-3).reverse().map((action, index) => (
+                          <div key={index} className="flex items-center space-x-2">
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-500" viewBox="0 0 20 20" fill="currentColor">
+                              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                            </svg>
+                            <span className="text-gray-600 dark:text-gray-300">{action.name}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
           </div>
-        </div>
+        )}
 
-        {/* Communication Logs panel - replace the Conversation History panel */}
+        {/* Communication Logs panel */}
         {showConversationHistory && (
           <div className="w-1/3 border-l border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 overflow-hidden flex flex-col">
             <div className="p-4 bg-gray-100 dark:bg-gray-700 border-b border-gray-200 dark:border-gray-600">
@@ -812,15 +1115,15 @@ export default function Chat() {
                   {communicationLogs.map((log, index) => (
                     <div 
                       key={index} 
-                      className={`p-3 rounded-lg text-sm ${
-                        log.is_user 
-                          ? 'bg-indigo-100 dark:bg-indigo-900 text-indigo-800 dark:text-indigo-200 border-l-4 border-indigo-500' 
-                          : 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 border-l-4 border-gray-500'
+                      className={`p-3 rounded-sm text-sm ${
+                        log.isUser 
+                          ? 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 border-l-4 border-gray-500' 
+                          : 'bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 border-l-4 border-gray-400'
                       }`}
                     >
-                      <div className="font-medium mb-1">
-                        {log.is_user ? 'User' : 'SonicLine Assistant'}
-                        <span className="text-xs font-normal ml-2 text-gray-500 dark:text-gray-400">
+                      <div className="font-medium mb-1 flex justify-between">
+                        <span>{log.isUser ? 'User' : 'SonicLine Assistant'}</span>
+                        <span className="text-xs font-normal text-gray-500 dark:text-gray-400">
                           {log.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                         </span>
                       </div>
@@ -830,13 +1133,47 @@ export default function Chat() {
                           <img 
                             src={log.imageUrl} 
                             alt="Image" 
-                            className="rounded-md max-w-full h-auto max-h-48 object-contain"
+                            className="rounded-sm max-w-full h-auto max-h-48 object-contain"
                           />
                         </div>
                       )}
-                    </div>
-                  ))}
-                </div>
+                      
+                      {/* Add tools information for assistant messages */}
+                      {!log.isUser && (
+                        <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
+                          <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Actions Used:</div>
+                          <div className="flex flex-wrap gap-1">
+                            {log.message.toLowerCase().includes('balance') && (
+                              <span className="px-2 py-0.5 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-sm text-xs">
+                                get-sonic-balance
+                              </span>
+                            )}
+                            {log.message.toLowerCase().includes('price') && (
+                              <span className="px-2 py-0.5 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-sm text-xs">
+                                get-token-price
+                              </span>
+                            )}
+                            {log.message.toLowerCase().includes('swap') && (
+                              <span className="px-2 py-0.5 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-sm text-xs">
+                                swap-sonic
+                              </span>
+                            )}
+                            {log.message.toLowerCase().includes('transaction') && (
+                              <span className="px-2 py-0.5 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-sm text-xs">
+                                get-transaction-history
+                              </span>
+                            )}
+                            {log.message.toLowerCase().includes('nft') && (
+                              <span className="px-2 py-0.5 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-sm text-xs">
+                                mint-nft
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+          </div>
+        ))}
+              </div>
               )}
             </div>
           </div>
@@ -866,7 +1203,7 @@ export default function Chat() {
       )}
 
       {/* Add voice settings panel */}
-      <div className="voice-settings-panel">
+      <div className="voice-settings-panel bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700">
         <div className="voice-setting">
           <label htmlFor="voice-enabled">
             <svg 
@@ -879,13 +1216,14 @@ export default function Chat() {
               strokeWidth="2" 
               strokeLinecap="round" 
               strokeLinejoin="round"
+              className="text-gray-600 dark:text-gray-400"
             >
               <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
               <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
               <line x1="12" y1="19" x2="12" y2="23"></line>
               <line x1="8" y1="23" x2="16" y2="23"></line>
             </svg>
-            Voice features
+            <span className="text-gray-700 dark:text-gray-300">Voice features</span>
           </label>
           <div className="toggle-switch">
             <input
@@ -895,8 +1233,8 @@ export default function Chat() {
               onChange={toggleVoiceEnabled}
             />
             <label htmlFor="voice-enabled"></label>
+            </div>
           </div>
-        </div>
         
         <div className="voice-setting">
           <label htmlFor="auto-play">
@@ -910,10 +1248,11 @@ export default function Chat() {
               strokeWidth="2" 
               strokeLinecap="round" 
               strokeLinejoin="round"
+              className="text-gray-600 dark:text-gray-400"
             >
               <polygon points="5 3 19 12 5 21 5 3"></polygon>
             </svg>
-            Auto-play responses
+            <span className="text-gray-700 dark:text-gray-300">Auto-play responses</span>
           </label>
           <div className="toggle-switch">
             <input
@@ -924,21 +1263,8 @@ export default function Chat() {
               disabled={!voiceSettings.enabled}
             />
             <label htmlFor="auto-play"></label>
-          </div>
         </div>
-        
-        {isSpeaking && (
-          <div className="speaking-indicator">
-            <div className="speaking-waves">
-              <span></span>
-              <span></span>
-              <span></span>
-              <span></span>
-              <span></span>
-            </div>
-            Speaking...
-          </div>
-        )}
+      </div>
       </div>
       
       <style>
@@ -1008,8 +1334,6 @@ export default function Chat() {
         /* Voice settings styles */
         .voice-settings-panel {
           padding: 10px 15px;
-          background-color: #f8f9fa;
-          border-top: 1px solid #e0e0e0;
           display: flex;
           flex-direction: column;
           gap: 10px;
@@ -1026,7 +1350,6 @@ export default function Chat() {
           display: flex;
           align-items: center;
           gap: 8px;
-          color: #555;
           cursor: pointer;
         }
         
@@ -1068,7 +1391,7 @@ export default function Chat() {
         }
         
         .toggle-switch input:checked + label {
-          background-color: #2196F3;
+          background-color: #000;
         }
         
         .toggle-switch input:checked + label:before {
@@ -1084,11 +1407,11 @@ export default function Chat() {
           display: flex;
           align-items: center;
           gap: 10px;
-          color: #2196F3;
+          color: #000;
           font-size: 14px;
           font-weight: 500;
           padding: 5px 10px;
-          background-color: rgba(33, 150, 243, 0.1);
+          background-color: rgba(0, 0, 0, 0.05);
           border-radius: 4px;
         }
         
@@ -1098,42 +1421,43 @@ export default function Chat() {
           height: 20px;
         }
         
-        .speaking-waves span {
-          display: inline-block;
-          width: 3px;
-          height: 100%;
-          margin-right: 3px;
-          background-color: #2196F3;
-          border-radius: 3px;
-          animation: wave 1s ease-in-out infinite;
+        .speaking-waves .wave {
+          width: 2px;
+          height: 10px;
+          margin: 0 1px;
+          background-color: #000;
+          animation: wave 1s infinite ease-in-out;
         }
         
-        .speaking-waves span:nth-child(2) {
-          animation-delay: 0.1s;
-        }
-        
-        .speaking-waves span:nth-child(3) {
+        .speaking-waves .wave:nth-child(2) {
           animation-delay: 0.2s;
         }
         
-        .speaking-waves span:nth-child(4) {
-          animation-delay: 0.3s;
-        }
-        
-        .speaking-waves span:nth-child(5) {
+        .speaking-waves .wave:nth-child(3) {
           animation-delay: 0.4s;
         }
         
         @keyframes wave {
           0%, 100% {
-            height: 6px;
+            height: 5px;
           }
           50% {
-            height: 16px;
+            height: 15px;
           }
+        }
+        
+        .dark .speaking-indicator {
+          color: #fff;
+          background-color: rgba(255, 255, 255, 0.1);
+        }
+        
+        .dark .speaking-waves .wave {
+          background-color: #fff;
         }
         `}
       </style>
     </div>
   )
 }
+
+export default Chat;
