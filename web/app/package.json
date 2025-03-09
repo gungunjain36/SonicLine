@@ -14,6 +14,7 @@
     "@privy-io/react-auth": "^2.6.1",
     "@tailwindcss/vite": "^4.0.9",
     "axios": "^1.8.1",
+    "ogl": "^1.0.11",
     "pinata-web3": "^0.5.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

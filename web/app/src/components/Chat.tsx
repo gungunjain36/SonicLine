@@ -6,6 +6,20 @@ import PrivyWalletCreator from './PrivyWalletCreator';
 import * as nftService from '../utils/nftService';
 import VoiceInput from './VoiceInput';
 import { textToSpeech, playAudio } from '../utils/elevenLabsService';
+import Orb from './Orb';
+import { 
+  MicrophoneIcon, 
+  NoSymbolIcon as MicrophoneOffIcon, 
+  SpeakerWaveIcon as VolumeUpIcon, 
+  SpeakerXMarkIcon as VolumeOffIcon, 
+  ChatBubbleLeftRightIcon as ChatIcon, 
+  ChatBubbleOvalLeftEllipsisIcon as ChatOffIcon, 
+  PhoneIcon, 
+  PhoneXMarkIcon as PhoneOffIcon, 
+  ClockIcon, 
+  XMarkIcon, 
+  PaperAirplaneIcon as SendIcon 
+} from '@heroicons/react/24/outline';
 
 interface Message {
   text: string;
@@ -744,294 +758,213 @@ const Chat: React.FC = () => {
     };
   }, []);
 
+  // Add textareaRef
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
   return (
-    <div className="flex flex-col h-screen bg-gray-100 dark:bg-gray-900">
-      {/* Header */}
-      <div className="bg-white dark:bg-gray-800 shadow px-6 py-4 flex justify-between items-center">
-        <h1 className="text-xl font-semibold text-gray-800 dark:text-white">SonicLine Assistant</h1>
+    <div className="flex flex-col h-screen bg-gradient-to-br from-gray-900 to-black text-white">
+      {/* Background blobs similar to Home.tsx */}
+      <div className="fixed inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute top-1/4 left-1/3 w-96 h-96 bg-[#f58435] rounded-full mix-blend-multiply filter blur-3xl opacity-10 animate-blob"></div>
+        <div className="absolute top-1/3 right-1/4 w-72 h-72 bg-[#df561f] rounded-full mix-blend-multiply filter blur-3xl opacity-10 animate-blob animation-delay-2000"></div>
+        <div className="absolute bottom-1/4 right-1/3 w-80 h-80 bg-[#224f81] rounded-full mix-blend-multiply filter blur-3xl opacity-10 animate-blob animation-delay-4000"></div>
+      </div>
+
+      {/* Minimal Header */}
+      <div className="relative z-10 flex justify-between items-center p-3 bg-black/20 backdrop-blur-sm">
+        <div className="flex items-center">
+          <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-[#f58435] via-white to-[#224f81]">
+            SonicLine
+          </h1>
+        </div>
+        
         <div className="flex space-x-2">
           <button 
-            onClick={toggleVoiceOnlyMode}
-            className={`px-4 py-2 rounded-sm text-sm font-medium ${
-              uiMode.voiceOnly 
-                ? 'bg-black text-white hover:bg-gray-900' 
-                : 'bg-gray-200 text-gray-800 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
-            }`}
+            onClick={toggleVoiceEnabled} 
+            className={`p-2 rounded-lg transition-all ${voiceSettings.enabled ? 'bg-gradient-to-r from-[#f58435] to-[#224f81] text-white' : 'bg-black/30 text-gray-400'}`}
+            title={voiceSettings.enabled ? "Disable voice input" : "Enable voice input"}
           >
-            {uiMode.voiceOnly ? 'Voice Mode' : 'Chat Mode'}
+            {voiceSettings.enabled ? <MicrophoneIcon className="h-4 w-4" /> : <MicrophoneOffIcon className="h-4 w-4" />}
           </button>
-          <button
-            onClick={toggleChatVisibility}
-            className={`px-4 py-2 rounded-sm text-sm font-medium ${
-              uiMode.chatVisible 
-                ? 'bg-gray-200 text-gray-800 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600' 
-                : 'bg-black text-white hover:bg-gray-900'
-            }`}
-            disabled={uiMode.voiceOnly}
+          
+          <button 
+            onClick={toggleVoiceOnlyMode} 
+            className={`p-2 rounded-lg transition-all ${uiMode.voiceOnly ? 'bg-gradient-to-r from-[#f58435] to-[#224f81] text-white' : 'bg-black/30 text-gray-400'}`}
+            title={uiMode.voiceOnly ? "Switch to chat mode" : "Switch to voice-only mode"}
           >
-            {uiMode.chatVisible ? 'Hide Chat' : 'Show Chat'}
+            {uiMode.voiceOnly ? <PhoneIcon className="h-4 w-4" /> : <PhoneOffIcon className="h-4 w-4" />}
           </button>
-          <button
-            onClick={toggleConversationHistory}
-            className={`px-4 py-2 rounded-sm text-sm font-medium ${
-              showConversationHistory 
-                ? 'bg-black text-white hover:bg-gray-900' 
-                : 'bg-gray-200 text-gray-800 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
-            }`}
+          
+          <button 
+            onClick={toggleConversationHistory} 
+            className="p-2 bg-black/30 rounded-lg text-gray-400 hover:bg-black/40 transition-all"
+            title="Show conversation history"
           >
-            {showConversationHistory ? 'Hide Logs' : 'Show Logs'}
+            <ClockIcon className="h-4 w-4" />
           </button>
-          {privyWallets.length > 0 ? (
-            <div className="flex items-center space-x-2 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 px-3 py-2 rounded-sm">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M2 5a2 2 0 012-2h12a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V5zm3 1h10v1H5V6zm10 3H5v1h10V9zm0 3H5v1h10v-1z" clipRule="evenodd" />
-              </svg>
-              <span className="text-sm truncate max-w-[150px]">{privyWallets[0].address}</span>
-        </div>
-          ) : (
-        <button
-          onClick={handleShowWalletCreator}
-              className="flex items-center space-x-1 bg-black hover:bg-gray-900 text-white px-4 py-2 rounded-sm text-sm font-medium"
-        >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M2 5a2 2 0 012-2h12a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V5zm3 1h10v1H5V6zm10 3H5v1h10V9zm0 3H5v1h10v-1z" clipRule="evenodd" />
-              </svg>
-              <span>Create Wallet</span>
-        </button>
-          )}
         </div>
       </div>
 
       {/* Main content */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Voice-only mode or Chat mode */}
+        {/* Voice-only mode with Orb */}
         {uiMode.voiceOnly ? (
-          <div className="flex-1 flex flex-col items-center justify-center p-6">
-            <div className="w-full max-w-4xl flex flex-col md:flex-row gap-6">
-              {/* Central voice input area */}
-              <div className="flex-1 flex flex-col items-center justify-center bg-white dark:bg-gray-800 rounded-sm shadow p-8">
-                <h2 className="text-2xl font-semibold mb-6 text-gray-800 dark:text-white">Sonic Voice Assistant</h2>
-                <p className="text-gray-600 dark:text-gray-300 mb-8 text-center">
-                  Click the microphone and say "Hey Sonic" to start a conversation
-                </p>
-                
-                <div className="voice-button-container mb-8">
-                  {voiceSettings.enabled && (
-                    <div className="scale-150 mb-4">
-                      <VoiceInput 
-                        onInterimResult={() => {}}
-                        onFinalResult={handleVoiceInput}
-                        onError={(error: string) => console.error('Voice input error:', error)}
-                      />
-                    </div>
-                  )}
-                  
-                  {isSpeaking && (
-                    <div className="speaking-indicator mt-4">
-                      <div className="speaking-waves">
-                        <div className="wave"></div>
-                        <div className="wave"></div>
-                        <div className="wave"></div>
-                      </div>
-                      <span>Speaking...</span>
-                    </div>
-                  )}
-                </div>
-                
-                {/* Last message display */}
-                {messages.length > 0 && (
-                  <div className="w-full bg-gray-50 dark:bg-gray-700 p-4 rounded-sm">
-                    <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">Last message:</p>
-                    <p className="text-gray-800 dark:text-gray-200">
-                      {messages[messages.length - 1].text}
-                    </p>
+          <div className="flex-1 flex flex-col items-center justify-center p-6 relative">
+            {/* Orb container */}
+            <div className="w-full max-w-md aspect-square relative mx-auto">
+              <Orb
+                hue={30} // Orange hue to match the theme
+                hoverIntensity={0.5}
+                rotateOnHover={true}
+                forceHoverState={isSpeaking}
+              />
+              
+              {/* Microphone button overlay */}
+              <div className="absolute inset-0 flex items-center justify-center">
+                {voiceSettings.enabled && (
+                  <div className="scale-150 z-10">
+                    <VoiceInput 
+                      onFinalResult={handleVoiceInput}
+                      disabled={isLoading}
+                    />
                   </div>
                 )}
               </div>
-              
-              {/* Actions panel */}
-              <div className="md:w-1/3 bg-white dark:bg-gray-800 rounded-sm shadow p-6">
-                <h3 className="text-lg font-semibold mb-4 text-gray-800 dark:text-white">Actions</h3>
-                
-                {/* Used actions */}
-                <div className="mb-6">
-                  <h4 className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">Recently Used:</h4>
-                  {usedActions.length === 0 ? (
-                    <p className="text-sm text-gray-500 dark:text-gray-400">No actions used yet</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {usedActions.slice(-5).reverse().map((action, index) => (
-                        <div key={index} className="bg-gray-50 dark:bg-gray-700 p-2 rounded-sm">
-                          <div className="flex justify-between">
-                            <span className="text-sm font-medium text-gray-800 dark:text-gray-200">{action.name}</span>
-                            <span className="text-xs text-gray-500 dark:text-gray-400">
-                              {action.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            </span>
-                          </div>
-                          <p className="text-xs text-gray-600 dark:text-gray-300">{action.description}</p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                
-                {/* Available actions */}
-                <div>
-                  <h4 className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">Available Actions:</h4>
-                  <div className="grid grid-cols-1 gap-1">
-                    {availableActions.map((action, index) => (
-          <div 
-            key={index} 
-                        className="text-xs px-2 py-1 bg-gray-50 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-sm"
-                      >
-                        {action}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
             </div>
+            
+            {/* Last message display */}
+            {messages.length > 0 && (
+              <div className="w-full max-w-md mt-8 bg-black/20 backdrop-blur-sm p-4 rounded-lg border border-gray-800/50">
+                <p className="text-sm text-gray-400 mb-2">Last message:</p>
+                <p className="text-white">{messages[messages.length - 1].text}</p>
+              </div>
+            )}
+            
+            {/* Speaking indicator */}
+            {isSpeaking && (
+              <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 flex items-center space-x-2 bg-black/30 backdrop-blur-sm px-4 py-2 rounded-full">
+                <span className="text-white text-sm">Speaking...</span>
+              </div>
+            )}
           </div>
         ) : (
-          // Regular chat mode
+          // Regular chat mode - more minimal
           <div className={`flex-1 flex flex-col ${showConversationHistory ? 'w-2/3' : 'w-full'}`}>
             {uiMode.chatVisible ? (
               <>
-                <div className="flex-1 overflow-y-auto p-6">
-                  {messages.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-full text-gray-500 dark:text-gray-400">
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
-                      </svg>
-                      <p className="text-lg font-medium">No messages yet</p>
-                      <p className="text-sm">Start a conversation with SonicLine Assistant</p>
-                    </div>
-                  ) : (
-                    messages.map((message, index) => (
-                      <div 
-                        key={index} 
-                        className={`mb-4 ${message.isUser ? 'text-right' : 'text-left'}`}
-                      >
-                        <div 
-                          className={`inline-block max-w-[80%] p-4 rounded-sm ${
-                            message.isUser 
-                              ? 'bg-black text-white' 
-                              : 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-white'
-                          }`}
-                        >
-                          <div className="whitespace-pre-wrap">{message.text}</div>
-                          {message.imageUrl && (
-                            <div className="mt-2">
-                              <img 
-                                src={message.imageUrl} 
-                                alt="Generated image" 
-                                className="rounded-sm max-w-full h-auto"
-                              />
-                            </div>
-                          )}
-                        </div>
-                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                          {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </div>
+                <div className="flex-1 overflow-y-auto p-4 space-y-4" ref={messagesEndRef}>
+                  {messages.length === 0 && !isLoading && (
+                    <div className="flex flex-col items-center justify-center h-full text-center">
+                      <div className="w-24 h-24 mb-6 rounded-full bg-gradient-to-r from-[#f58435]/10 to-[#224f81]/10 flex items-center justify-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-white/30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                        </svg>
                       </div>
-                    ))
-                  )}
-                  <div ref={messagesEndRef}></div>
-                </div>
-                
-                {/* Input area */}
-                <div className="p-4 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
-                  {waitingForEmail ? (
-                    <div className="flex items-end space-x-2">
-                      <div className="flex-1 relative">
-                        <textarea
-                          className="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-sm bg-white dark:bg-gray-700 text-gray-800 dark:text-white resize-none focus:outline-none focus:ring-1 focus:ring-gray-400 dark:focus:ring-gray-500"
-                          placeholder="Enter your email address..."
-                          value={inputMessage}
-                          onChange={(e) => setInputMessage(e.target.value)}
-                          onKeyDown={handleKeyDown}
-                          rows={1}
-                          style={{ minHeight: '44px', maxHeight: '200px' }}
-                        />
-                        
-                        {/* Voice input button */}
-                        {voiceSettings.enabled && (
-                          <div className="absolute right-2 bottom-2">
-                            <VoiceInput 
-                              onInterimResult={() => {}}
-                              onFinalResult={handleVoiceInput}
-                              onError={(error: string) => console.error('Voice input error:', error)}
-                            />
-                          </div>
-                        )}
-                      </div>
-                      
-                      <button
-                        className="p-3 bg-black hover:bg-gray-900 text-white rounded-sm flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
-                        onClick={() => handleSend(inputMessage)}
-                        disabled={isLoading || !inputMessage.trim()}
-                      >
-                        {isLoading ? (
-                          <div className="loading-spinner"></div>
-                        ) : (
-                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <line x1="22" y1="2" x2="11" y2="13"></line>
-                            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-                          </svg>
-                        )}
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex items-end space-x-2">
-                      <div className="flex-1 relative">
-                        <textarea
-                          className="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-sm bg-white dark:bg-gray-700 text-gray-800 dark:text-white resize-none focus:outline-none focus:ring-1 focus:ring-gray-400 dark:focus:ring-gray-500"
-                          placeholder="Type your message..."
-                          value={inputMessage}
-                          onChange={(e) => setInputMessage(e.target.value)}
-                          onKeyDown={handleKeyDown}
-                          rows={1}
-                          style={{ minHeight: '44px', maxHeight: '200px' }}
-                        />
-                        
-                        {/* Voice input button */}
-                        {voiceSettings.enabled && (
-                          <div className="absolute right-2 bottom-2">
-                            <VoiceInput 
-                              onInterimResult={() => {}}
-                              onFinalResult={handleVoiceInput}
-                              onError={(error: string) => console.error('Voice input error:', error)}
-                            />
-                          </div>
-                        )}
-                      </div>
-                      
-                      <button
-                        className="p-3 bg-black hover:bg-gray-900 text-white rounded-sm flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
-                        onClick={() => handleSend(inputMessage)}
-                        disabled={isLoading || !inputMessage.trim()}
-                      >
-                        {isLoading ? (
-                          <div className="loading-spinner"></div>
-                        ) : (
-                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <line x1="22" y1="2" x2="11" y2="13"></line>
-                            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-                          </svg>
-                        )}
-                      </button>
+                      <h3 className="text-2xl font-bold mb-2 bg-clip-text text-transparent bg-gradient-to-r from-[#f58435] via-white to-[#224f81]">Start a Conversation</h3>
+                      <p className="text-lg text-orange-100/70 max-w-md font-light">Ask about blockchain, tokens, or use voice commands</p>
                     </div>
                   )}
                   
+                  {messages.map((msg, index) => (
+                    <div 
+                      key={index} 
+                      className={`flex ${msg.isUser ? 'justify-end' : 'justify-start'}`}
+                    >
+                      <div 
+                        className={`max-w-3/4 p-3 rounded-lg ${
+                          msg.isUser 
+                            ? 'bg-gradient-to-r from-[#f58435]/20 to-[#df561f]/20 border border-[#f58435]/30 text-white' 
+                            : 'bg-gradient-to-r from-[#224f81]/20 to-[#1a3b61]/20 border border-[#224f81]/30 text-white'
+                        } ${msg.isError ? 'border-2 border-red-500' : ''}`}
+                      >
+                        {msg.isEmailInput ? (
+                          <div className="space-y-2">
+                            <p>{msg.text}</p>
+                            <input 
+                              type="email" 
+                              placeholder="Enter your email" 
+                              className="w-full p-2 rounded bg-black/30 border border-gray-700 text-white"
+                              value={inputMessage}
+                              onChange={(e) => setInputMessage(e.target.value)}
+                            />
+                            <button 
+                              onClick={() => handleEmailLogin(inputMessage)}
+                              className="w-full p-2 bg-gradient-to-r from-[#f58435] to-[#224f81] rounded-lg text-white font-medium transition-all hover:opacity-90"
+                            >
+                              Login
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <p className="whitespace-pre-wrap">{msg.text}</p>
+                            {msg.imageUrl && (
+                              <div className="mt-2 rounded-lg overflow-hidden border border-gray-700">
+                                <img src={msg.imageUrl} alt="Generated content" className="w-full h-auto" />
+                              </div>
+                            )}
+                          </>
+                        )}
+                        <div className="text-xs text-gray-400 mt-1">
+                          {msg.timestamp.toLocaleTimeString()}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {isLoading && (
+                    <div className="flex justify-start">
+                      <div className="max-w-3/4 p-3 rounded-lg bg-gradient-to-r from-[#224f81]/20 to-[#1a3b61]/20 border border-[#224f81]/30 text-white">
+                        <div className="flex space-x-2">
+                          <div className="w-2 h-2 rounded-full bg-white animate-bounce"></div>
+                          <div className="w-2 h-2 rounded-full bg-white animate-bounce animation-delay-200"></div>
+                          <div className="w-2 h-2 rounded-full bg-white animate-bounce animation-delay-400"></div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                
+                {/* Minimal Input area */}
+                <div className="relative z-10 p-3 bg-black/20 backdrop-blur-sm">
+                  <div className="flex space-x-2">
+                    {voiceSettings.enabled && (
+                      <div className="flex-none">
+                        <VoiceInput 
+                          onFinalResult={handleVoiceInput} 
+                          disabled={isLoading}
+                        />
+                      </div>
+                    )}
+                    
+                    <div className="relative flex-1">
+                      <textarea
+                        ref={textareaRef}
+                        value={inputMessage}
+                        onChange={(e) => setInputMessage(e.target.value)}
+                        onKeyDown={handleKeyDown}
+                        placeholder="Type your message..."
+                        className="w-full p-2 pr-10 bg-black/30 border border-gray-800/50 rounded-lg text-white resize-none focus:outline-none focus:ring-1 focus:ring-[#f58435]/50"
+                        rows={1}
+                        disabled={isLoading}
+                      />
+                      <button
+                        onClick={() => handleSend(inputMessage)}
+                        disabled={isLoading || !inputMessage.trim()}
+                        className="absolute right-2 bottom-2 p-1.5 rounded-full bg-gradient-to-r from-[#f58435] to-[#224f81] text-white disabled:opacity-50 transition-all"
+                      >
+                        <SendIcon className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                  
                   {/* Speaking indicator */}
                   {isSpeaking && (
-                    <div className="speaking-indicator mt-2">
-                      <div className="speaking-waves">
-                        <div className="wave"></div>
-                        <div className="wave"></div>
-                        <div className="wave"></div>
+                    <div className="mt-2 flex items-center space-x-2 bg-black/30 px-3 py-1 rounded-full inline-block">
+                      <div className="flex space-x-1">
+                        <div className="w-1 h-3 bg-[#f58435] rounded-full animate-pulse"></div>
+                        <div className="w-1 h-3 bg-[#f58435] rounded-full animate-pulse animation-delay-200"></div>
+                        <div className="w-1 h-3 bg-[#f58435] rounded-full animate-pulse animation-delay-400"></div>
                       </div>
-                      <span>Speaking...</span>
+                      <span className="text-white text-xs">Speaking...</span>
                     </div>
                   )}
                 </div>
@@ -1040,53 +973,51 @@ const Chat: React.FC = () => {
               <div className="flex-1 flex flex-col p-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {/* Dashboard Cards */}
-                  <div className="bg-white dark:bg-gray-800 rounded-sm shadow p-6">
-                    <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Voice Features</h3>
+                  <div className="bg-black/20 backdrop-blur-sm border border-gray-800/50 rounded-xl p-6">
+                    <h3 className="text-lg font-bold mb-4 bg-clip-text text-transparent bg-gradient-to-r from-[#f58435] to-[#224f81]">Voice Features</h3>
                     <div className="space-y-4">
                       <div className="flex justify-between items-center">
-                        <span className="text-gray-600 dark:text-gray-300">Voice Enabled</span>
-                        <span className={`px-2 py-1 rounded-sm text-xs font-medium ${voiceSettings.enabled ? 'bg-gray-900 text-white' : 'bg-gray-200 text-gray-800'}`}>
+                        <span className="text-gray-300">Voice Enabled</span>
+                        <span className={`px-2 py-1 rounded-lg text-xs font-medium ${voiceSettings.enabled ? 'bg-gradient-to-r from-[#f58435] to-[#224f81] text-white' : 'bg-gray-800 text-gray-400'}`}>
                           {voiceSettings.enabled ? 'ON' : 'OFF'}
                         </span>
                       </div>
                       <div className="flex justify-between items-center">
-                        <span className="text-gray-600 dark:text-gray-300">Auto-Play Responses</span>
-                        <span className={`px-2 py-1 rounded-sm text-xs font-medium ${voiceSettings.autoPlayResponses ? 'bg-gray-900 text-white' : 'bg-gray-200 text-gray-800'}`}>
+                        <span className="text-gray-300">Auto-Play Responses</span>
+                        <span className={`px-2 py-1 rounded-lg text-xs font-medium ${voiceSettings.autoPlayResponses ? 'bg-gradient-to-r from-[#f58435] to-[#224f81] text-white' : 'bg-gray-800 text-gray-400'}`}>
                           {voiceSettings.autoPlayResponses ? 'ON' : 'OFF'}
                         </span>
                       </div>
                     </div>
                   </div>
                   
-                  <div className="bg-white dark:bg-gray-800 rounded-sm shadow p-6">
-                    <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Wallet Status</h3>
+                  <div className="bg-black/20 backdrop-blur-sm border border-gray-800/50 rounded-xl p-6">
+                    <h3 className="text-lg font-bold mb-4 bg-clip-text text-transparent bg-gradient-to-r from-[#f58435] to-[#224f81]">Wallet Status</h3>
                     <div className="space-y-4">
                       <div className="flex justify-between items-center">
-                        <span className="text-gray-600 dark:text-gray-300">Connected Wallet</span>
-                        <span className={`px-2 py-1 rounded-sm text-xs font-medium ${privyWallets.length > 0 ? 'bg-gray-900 text-white' : 'bg-gray-200 text-gray-800'}`}>
+                        <span className="text-gray-300">Connected Wallet</span>
+                        <span className={`px-2 py-1 rounded-lg text-xs font-medium ${privyWallets.length > 0 ? 'bg-gradient-to-r from-[#f58435] to-[#224f81] text-white' : 'bg-gray-800 text-gray-400'}`}>
                           {privyWallets.length > 0 ? 'YES' : 'NO'}
                         </span>
                       </div>
                       {privyWallets.length > 0 && (
-                        <div className="text-sm text-gray-500 dark:text-gray-400 break-all">
+                        <div className="text-sm text-gray-400 break-all">
                           {privyWallets[0].address}
                         </div>
                       )}
                     </div>
                   </div>
                   
-                  <div className="bg-white dark:bg-gray-800 rounded-sm shadow p-6">
-                    <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Recent Actions</h3>
+                  <div className="bg-black/20 backdrop-blur-sm border border-gray-800/50 rounded-xl p-6">
+                    <h3 className="text-lg font-bold mb-4 bg-clip-text text-transparent bg-gradient-to-r from-[#f58435] to-[#224f81]">Recent Actions</h3>
                     <div className="space-y-2">
                       {usedActions.length === 0 ? (
-                        <p className="text-sm text-gray-500 dark:text-gray-400">No actions used yet</p>
+                        <p className="text-sm text-gray-500">No actions used yet</p>
                       ) : (
                         usedActions.slice(-3).reverse().map((action, index) => (
                           <div key={index} className="flex items-center space-x-2">
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-500" viewBox="0 0 20 20" fill="currentColor">
-                              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                            </svg>
-                            <span className="text-gray-600 dark:text-gray-300">{action.name}</span>
+                            <div className="w-2 h-2 rounded-full bg-[#f58435]"></div>
+                            <span className="text-gray-300">{action.name}</span>
                           </div>
                         ))
                       )}
@@ -1098,366 +1029,73 @@ const Chat: React.FC = () => {
           </div>
         )}
 
-        {/* Communication Logs panel */}
+        {/* Conversation history sidebar - more minimal */}
         {showConversationHistory && (
-          <div className="w-1/3 border-l border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 overflow-hidden flex flex-col">
-            <div className="p-4 bg-gray-100 dark:bg-gray-700 border-b border-gray-200 dark:border-gray-600">
-              <h2 className="font-semibold text-gray-800 dark:text-white">Communication Logs</h2>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                All interactions with SonicLine Assistant, including those from other devices
-              </p>
-            </div>
-            <div className="flex-1 overflow-y-auto p-4">
-              {communicationLogs.length === 0 ? (
-                <p className="text-gray-500 dark:text-gray-400 text-center mt-4">No communication logs yet</p>
-              ) : (
-                <div className="space-y-3">
-                  {communicationLogs.map((log, index) => (
-                    <div 
-                      key={index} 
-                      className={`p-3 rounded-sm text-sm ${
-                        log.isUser 
-                          ? 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 border-l-4 border-gray-500' 
-                          : 'bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 border-l-4 border-gray-400'
-                      }`}
-                    >
-                      <div className="font-medium mb-1 flex justify-between">
-                        <span>{log.isUser ? 'User' : 'SonicLine Assistant'}</span>
-                        <span className="text-xs font-normal text-gray-500 dark:text-gray-400">
-                          {log.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                        </span>
-                      </div>
-                      <div className="whitespace-pre-wrap">{log.message}</div>
-                      {log.imageUrl && (
-                        <div className="mt-2">
-                          <img 
-                            src={log.imageUrl} 
-                            alt="Image" 
-                            className="rounded-sm max-w-full h-auto max-h-48 object-contain"
-                          />
-                        </div>
-                      )}
-                      
-                      {/* Add tools information for assistant messages */}
-                      {!log.isUser && (
-                        <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
-                          <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Actions Used:</div>
-                          <div className="flex flex-wrap gap-1">
-                            {log.message.toLowerCase().includes('balance') && (
-                              <span className="px-2 py-0.5 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-sm text-xs">
-                                get-sonic-balance
-                              </span>
-                            )}
-                            {log.message.toLowerCase().includes('price') && (
-                              <span className="px-2 py-0.5 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-sm text-xs">
-                                get-token-price
-                              </span>
-                            )}
-                            {log.message.toLowerCase().includes('swap') && (
-                              <span className="px-2 py-0.5 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-sm text-xs">
-                                swap-sonic
-                              </span>
-                            )}
-                            {log.message.toLowerCase().includes('transaction') && (
-                              <span className="px-2 py-0.5 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-sm text-xs">
-                                get-transaction-history
-                              </span>
-                            )}
-                            {log.message.toLowerCase().includes('nft') && (
-                              <span className="px-2 py-0.5 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-sm text-xs">
-                                mint-nft
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      )}
-          </div>
-        ))}
+          <div className="fixed inset-y-0 right-0 w-72 bg-black/40 backdrop-blur-md border-l border-gray-800/50 shadow-xl z-40 overflow-y-auto">
+            <div className="p-3 border-b border-gray-800/50">
+              <div className="flex justify-between items-center">
+                <h2 className="text-lg font-bold bg-clip-text text-transparent bg-gradient-to-r from-[#f58435] to-[#224f81]">History</h2>
+                <button 
+                  onClick={toggleConversationHistory}
+                  className="p-1 rounded-full hover:bg-gray-800/50 transition-all"
+                >
+                  <XMarkIcon className="h-4 w-4 text-gray-400" />
+                </button>
               </div>
+            </div>
+            <div className="p-3 space-y-3">
+              {communicationLogs.length === 0 ? (
+                <div className="text-center py-8 text-gray-400">
+                  <p>No conversation history yet</p>
+                </div>
+              ) : (
+                communicationLogs.map((log, index) => (
+                  <div key={index} className="p-2 rounded-lg bg-black/30 border border-gray-800/50 hover:border-[#f58435]/30 cursor-pointer transition-all">
+                    <p className="text-sm text-gray-300 truncate">{log.message}</p>
+                    <div className="flex justify-between items-center mt-1">
+                      <span className="text-xs text-gray-500">{log.timestamp.toLocaleString()}</span>
+                      <span className={`text-xs px-1.5 py-0.5 rounded-full ${log.isUser ? 'bg-[#f58435]/20 text-[#f58435]' : 'bg-[#224f81]/20 text-[#224f81]'}`}>
+                        {log.isUser ? 'You' : 'AI'}
+                      </span>
+                    </div>
+                  </div>
+                ))
               )}
             </div>
           </div>
         )}
       </div>
 
-      {/* Wallet Creator Modal */}
+      {/* Wallet creator modal - more minimal */}
       {showPrivyWalletCreator && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-700">
-              <h2 className="text-xl font-semibold text-gray-800 dark:text-white">Create Wallet</h2>
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-black/60 p-6 rounded-xl border border-gray-800/50 shadow-2xl max-w-md w-full">
+            <h2 className="text-xl font-bold mb-4 bg-clip-text text-transparent bg-gradient-to-r from-[#f58435] to-[#224f81]">Create Wallet</h2>
+            <div className="space-y-4">
+              <button 
+                onClick={() => handleWalletCreation('ethereum')}
+                className="w-full p-3 bg-gradient-to-r from-[#f58435] to-[#224f81] rounded-lg text-white font-medium transition-all hover:opacity-90"
+              >
+                Ethereum Wallet
+              </button>
+              <button 
+                onClick={() => handleWalletCreation('cardano')}
+                className="w-full p-3 bg-gradient-to-r from-[#f58435] to-[#224f81] rounded-lg text-white font-medium transition-all hover:opacity-90"
+              >
+                Cardano Wallet
+              </button>
               <button 
                 onClick={() => setShowPrivyWalletCreator(false)}
-                className="p-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                className="w-full p-3 bg-black/50 border border-gray-800/50 rounded-lg text-white font-medium transition-all hover:bg-black/70"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
+                Cancel
               </button>
-            </div>
-            <div className="p-4">
-              <PrivyWalletCreator />
             </div>
           </div>
         </div>
       )}
-
-      {/* Add voice settings panel */}
-      <div className="voice-settings-panel bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700">
-        <div className="voice-setting">
-          <label htmlFor="voice-enabled">
-            <svg 
-              xmlns="http://www.w3.org/2000/svg" 
-              width="16" 
-              height="16" 
-              viewBox="0 0 24 24" 
-              fill="none" 
-              stroke="currentColor" 
-              strokeWidth="2" 
-              strokeLinecap="round" 
-              strokeLinejoin="round"
-              className="text-gray-600 dark:text-gray-400"
-            >
-              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
-              <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
-              <line x1="12" y1="19" x2="12" y2="23"></line>
-              <line x1="8" y1="23" x2="16" y2="23"></line>
-            </svg>
-            <span className="text-gray-700 dark:text-gray-300">Voice features</span>
-          </label>
-          <div className="toggle-switch">
-            <input
-              id="voice-enabled"
-              type="checkbox"
-              checked={voiceSettings.enabled}
-              onChange={toggleVoiceEnabled}
-            />
-            <label htmlFor="voice-enabled"></label>
-            </div>
-          </div>
-        
-        <div className="voice-setting">
-          <label htmlFor="auto-play">
-            <svg 
-              xmlns="http://www.w3.org/2000/svg" 
-              width="16" 
-              height="16" 
-              viewBox="0 0 24 24" 
-              fill="none" 
-              stroke="currentColor" 
-              strokeWidth="2" 
-              strokeLinecap="round" 
-              strokeLinejoin="round"
-              className="text-gray-600 dark:text-gray-400"
-            >
-              <polygon points="5 3 19 12 5 21 5 3"></polygon>
-            </svg>
-            <span className="text-gray-700 dark:text-gray-300">Auto-play responses</span>
-          </label>
-          <div className="toggle-switch">
-            <input
-              id="auto-play"
-              type="checkbox"
-              checked={voiceSettings.autoPlayResponses}
-              onChange={toggleAutoPlayResponses}
-              disabled={!voiceSettings.enabled}
-            />
-            <label htmlFor="auto-play"></label>
-        </div>
-      </div>
-      </div>
-      
-      <style>
-        {`
-        /* Existing styles... */
-        
-        .chat-input-container {
-          display: flex;
-          align-items: center;
-          padding: 10px;
-          border-top: 1px solid #e0e0e0;
-          background-color: #fff;
-        }
-        
-        .chat-input-container input {
-          flex: 1;
-          padding: 10px 15px;
-          border: 1px solid #ddd;
-          border-radius: 20px;
-          font-size: 14px;
-          outline: none;
-          transition: border-color 0.2s;
-        }
-        
-        .chat-input-container input:focus {
-          border-color: #007bff;
-        }
-        
-        .chat-input-container button {
-          background: #007bff;
-          color: white;
-          border: none;
-          border-radius: 50%;
-          width: 40px;
-          height: 40px;
-          margin-left: 10px;
-          cursor: pointer;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          transition: background-color 0.2s;
-        }
-        
-        .chat-input-container button:hover {
-          background: #0069d9;
-        }
-        
-        .chat-input-container button:disabled {
-          background: #cccccc;
-          cursor: not-allowed;
-        }
-        
-        .loading-spinner {
-          display: inline-block;
-          width: 20px;
-          height: 20px;
-          border: 2px solid rgba(255,255,255,0.3);
-          border-radius: 50%;
-          border-top-color: white;
-          animation: spin 1s ease-in-out infinite;
-        }
-        
-        @keyframes spin {
-          to { transform: rotate(360deg); }
-        }
-        
-        /* Voice settings styles */
-        .voice-settings-panel {
-          padding: 10px 15px;
-          display: flex;
-          flex-direction: column;
-          gap: 10px;
-        }
-        
-        .voice-setting {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          font-size: 14px;
-        }
-        
-        .voice-setting label {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          cursor: pointer;
-        }
-        
-        .toggle-switch {
-          position: relative;
-          display: inline-block;
-          width: 40px;
-          height: 20px;
-        }
-        
-        .toggle-switch input {
-          opacity: 0;
-          width: 0;
-          height: 0;
-        }
-        
-        .toggle-switch label {
-          position: absolute;
-          cursor: pointer;
-          top: 0;
-          left: 0;
-          right: 0;
-          bottom: 0;
-          background-color: #ccc;
-          transition: .4s;
-          border-radius: 34px;
-        }
-        
-        .toggle-switch label:before {
-          position: absolute;
-          content: "";
-          height: 16px;
-          width: 16px;
-          left: 2px;
-          bottom: 2px;
-          background-color: white;
-          transition: .4s;
-          border-radius: 50%;
-        }
-        
-        .toggle-switch input:checked + label {
-          background-color: #000;
-        }
-        
-        .toggle-switch input:checked + label:before {
-          transform: translateX(20px);
-        }
-        
-        .toggle-switch input:disabled + label {
-          opacity: 0.5;
-          cursor: not-allowed;
-        }
-        
-        .speaking-indicator {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          color: #000;
-          font-size: 14px;
-          font-weight: 500;
-          padding: 5px 10px;
-          background-color: rgba(0, 0, 0, 0.05);
-          border-radius: 4px;
-        }
-        
-        .speaking-waves {
-          display: flex;
-          align-items: center;
-          height: 20px;
-        }
-        
-        .speaking-waves .wave {
-          width: 2px;
-          height: 10px;
-          margin: 0 1px;
-          background-color: #000;
-          animation: wave 1s infinite ease-in-out;
-        }
-        
-        .speaking-waves .wave:nth-child(2) {
-          animation-delay: 0.2s;
-        }
-        
-        .speaking-waves .wave:nth-child(3) {
-          animation-delay: 0.4s;
-        }
-        
-        @keyframes wave {
-          0%, 100% {
-            height: 5px;
-          }
-          50% {
-            height: 15px;
-          }
-        }
-        
-        .dark .speaking-indicator {
-          color: #fff;
-          background-color: rgba(255, 255, 255, 0.1);
-        }
-        
-        .dark .speaking-waves .wave {
-          background-color: #fff;
-        }
-        `}
-      </style>
     </div>
-  )
+  );
 }
 
 export default Chat;
