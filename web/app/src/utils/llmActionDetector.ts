@@ -9,7 +9,7 @@ class LlmActionDetector {
   private apiUrl: string;
   
   constructor() {
-    this.apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+    this.apiUrl = import.meta.env.VITE_API_URL || 'https://e52f-2400-4f20-11-c00-31e9-c732-86d7-87c9.ngrok-free.app';
   }
   
   /**

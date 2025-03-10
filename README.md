@@ -1,109 +1,83 @@
-# SonicLine with Privy Wallet Integration
+# SonicLine: Frictionless Web3 Onboarding
 
-SonicLine is an AI-driven chat application that now includes wallet creation functionality using Privy's embedded wallet solution.
+SonicLine solves the fundamental problem of onboarding new users into web3 and cryptocurrency. We've eliminated the traditional barriers to entry with a revolutionary approach to wallet creation and blockchain interaction.
 
-## Features
+## The Problem We Solve
 
-- AI-powered chat interface
-- Instant wallet creation with a simple chat message - no login required
-- Client-side wallet creation using Privy
-- Secure and user-friendly wallet management
-- Modern and responsive UI
+Web3 adoption has been hindered by complex onboarding processes that intimidate newcomers. SonicLine removes these barriers completely:
 
-## Setup Instructions
+- **Instant Wallet Creation**: Simply by calling a phone number, users automatically have a wallet created for them - no technical knowledge required
+- **Seamless Fiat Onramp**: After wallet creation, users can easily deposit traditional currency (Fiat) to get started with crypto
+- **AI-Powered Assistance**: A swarm of specialized AI agents guide users through every step of their web3 journey
 
-### Prerequisites
+## Key Features
 
-- Node.js (v16+)
-- Python (v3.8+)
-- Privy App ID (get one from [Privy Dashboard](https://console.privy.io/))
+### Effortless Onboarding
+- One phone call creates a wallet - no downloads, signups, or seed phrases to manage
+- Natural conversation interface eliminates technical jargon
+- Fiat onramp built directly into the conversation flow
 
-### Backend Setup
+### AI Agent Ecosystem
+- Multiple specialized AI agents work together to handle different blockchain operations
+- Users can call anytime to perform virtually any web3 action through simple voice commands
+- No need to learn complex interfaces or blockchain concepts
 
-1. Navigate to the backend directory:
-   ```
-   cd backend
-   ```
+### Comprehensive Web3 Capabilities
+Our AI agents can help users with a theoretical infinite range of blockchain activities:
+- Converting between cryptocurrencies (e.g., buying USDC with ETH)
+- Staking assets for passive income
+- Deploying and interacting with smart contracts
+- Purchasing NFTs from marketplaces
+- Managing DeFi investments
+- Sending and receiving crypto payments
+- Exploring new blockchain protocols and opportunities
 
-2. Create a virtual environment:
-   ```
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
+## How It Works
 
-3. Install dependencies:
-   ```
-   pip install -r requirements.txt
-   ```
+1. **Call Initiation**: User calls the SonicLine phone number
+2. **Automatic Wallet Creation**: A secure wallet is instantly created for the caller
+3. **Fiat Deposit**: User can add funds through a simple, guided fiat onramp process
+4. **AI-Guided Actions**: The user can immediately begin performing blockchain operations through natural conversation
+5. **Ongoing Support**: Users can call back anytime to manage their assets or explore new web3 opportunities
 
-4. Configure the Sonic connection:
-   ```
-   python -m src.cli configure
-   ```
-   Follow the prompts to set up your Sonic private key and optionally your Privy API credentials.
+## Technical Architecture
 
-5. Start the backend server:
-   ```
-   python -m src.server.app
-   ```
+- **Voice Interface**: Phone system connected to our AI agent network
+- **Wallet Infrastructure**: Secure, non-custodial wallet creation system
+- **AI Agent Swarm**: Multiple specialized agents handling different aspects of blockchain interaction
+- **Fiat Onramp Integration**: Seamless connection to fiat-to-crypto conversion services
+- **Blockchain Connectors**: Interfaces with multiple blockchains and protocols
 
-### Frontend Setup
+## Available Connections and Actions
 
-1. Navigate to the web app directory:
-   ```
-   cd web/app
-   ```
+### Sonic Connection
+Our platform integrates with Sonic DEX through the following actions:
+- **get-token-by-ticker**: Retrieve token address by ticker symbol
+- **get-sonic-balance**: Check $S or token balance for an address
+- **send-sonic**: Transfer $S tokens to another address
+- **send-sonic-token**: Send any token on Sonic to an address
+- **swap-sonic**: Swap tokens on Sonic DEX with customizable slippage
+- **get-token-price**: Get current price of a token in USD or another base currency
+- **get-transaction-history**: Retrieve transaction history for an address
+- **add-liquidity**: Add liquidity to a pool on Sonic
+- **remove-liquidity**: Remove liquidity from a pool on Sonic
+- **get-pool-info**: Get information about a liquidity pool
+- **estimate-swap**: Estimate the output amount for a token swap without executing it
+- **create-wallet**: Create a new wallet using the Privy API
+- **mint-nft**: Mint a new NFT on Sonic with the given metadata URI
 
-2. Install dependencies:
-   ```
-   npm install
-   ```
-
-3. Create a `.env` file in the `web/app` directory with your Privy App ID:
-   ```
-   VITE_PRIVY_APP_ID=your-privy-app-id
-   ```
-
-4. Start the development server:
-   ```
-   npm run dev
-   ```
-
-5. Open your browser and navigate to `http://localhost:5173`
-
-## Using Wallet Creation
-
-Creating a wallet in SonicLine is incredibly simple:
-
-1. **Just Chat**: Simply type "create a wallet for me" (or similar phrases) in the chat, and the AI will instantly create a wallet for you - no login or authentication required!
-2. **Direct Button**: Alternatively, click on the "Create Wallet" button in either the home page or chat interface
-
-When you request a wallet through chat, the application will:
-1. Create a new embedded wallet directly in the chat
-2. Display the wallet address and other details in the conversation
-3. Copy the wallet address to your clipboard for convenience
-
-## Architecture
-
-- **Backend**: Python FastAPI server that handles AI chat functionality and recognizes wallet creation requests
-- **Frontend**: React application with Privy integration for wallet management
-- **Wallet Creation**: Client-side wallet creation using Privy's React SDK with no authentication barriers
-- **Natural Language Processing**: The backend can recognize wallet creation requests in natural language and trigger the wallet creation process directly in the chat
+### Allora Connection
+We also integrate with the Allora Network for AI-powered market insights:
+- **get-inference**: Get inference from Allora Network for a specific topic
+- **list-topics**: List all available Allora Network topics
 
 ## Security Considerations
 
-- Wallet private keys are never exposed to the backend
-- All wallet operations happen client-side for maximum security
-- No sensitive wallet data is stored on the server
-- Wallets are created instantly without requiring user authentication
+- Non-custodial wallet architecture ensures users maintain control of their assets
+- End-to-end encryption for all communications
+- No storage of sensitive wallet data on centralized servers
+- Continuous security auditing and monitoring
 
-## Troubleshooting
+## Vision
 
-- If you encounter issues with wallet creation, ensure your Privy App ID is correctly set in the `.env` file
-- For backend connection issues, verify that your Sonic private key is properly configured
-- Check browser console for any frontend errors
-- If the chat-based wallet creation doesn't work, try using the direct button instead
-
-## License
-
-[MIT License](LICENSE) 
+SonicLine represents the future of web3 adoption - where blockchain technology becomes accessible to everyone through natural human interaction, without requiring technical knowledge or complex setup processes. By removing the friction from web3 onboarding, we're opening the door to mass adoption of decentralized technologies.

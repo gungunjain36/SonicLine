@@ -68,7 +68,7 @@ export async function generateAndMintNFT(description: string): Promise<NftGenera
     const metadataUri = `ipfs://${metadataCid}`;
     
     const mintStartTime = Date.now();
-    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+    const apiUrl = import.meta.env.VITE_API_URL || 'https://e52f-2400-4f20-11-c00-31e9-c732-86d7-87c9.ngrok-free.app';
     const response = await axios.post(`${apiUrl}/api/mint-nft`, {
       uri: metadataUri,
       description
