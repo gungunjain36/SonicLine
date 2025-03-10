@@ -84,4 +84,58 @@ export async function generateAndMintNFT(description) {
       error: error.message || 'Unknown error occurred'
     };
   }
+}
+
+/**
+ * Generate an NFT from a text description with progress updates
+ * @param {string} description - Text description of the image to generate
+ * @param {Function} updateProgress - Callback function to update progress
+ * @returns {Promise<Object>} - Object containing the image URL and other details
+ */
+export async function generateNFT(description, updateProgress) {
+  try {
+    // Update progress with initial message
+    updateProgress('Starting to generate your NFT image...');
+    
+    // Step 1: Generate the image using fal.ai
+    console.log('🖼️ Generating image from description:', description);
+    const startTime = Date.now();
+    const imageUrl = await generateImage(description);
+    const imageGenTime = ((Date.now() - startTime) / 1000).toFixed(2);
+    console.log(`✅ Image generated in ${imageGenTime}s:`, imageUrl);
+    
+    // Update progress after image generation
+    updateProgress(`Image generated successfully in ${imageGenTime} seconds!`);
+    
+    // Step 2: Upload the image to IPFS
+    updateProgress('Uploading image to decentralized storage...');
+    console.log('📤 Uploading image to IPFS...');
+    const sanitizedDescription = description.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 20);
+    const ipfsStartTime = Date.now();
+    const imageCid = await uploadImageToIPFS(imageUrl, sanitizedDescription);
+    const ipfsUploadTime = ((Date.now() - ipfsStartTime) / 1000).toFixed(2);
+    console.log(`✅ Image uploaded to IPFS in ${ipfsUploadTime}s with CID:`, imageCid);
+    
+    // Update progress after IPFS upload
+    updateProgress('Image stored securely on decentralized network!');
+    
+    // Get gateway URL for the image
+    const imageGatewayUrl = await getIpfsGatewayUrl(imageCid);
+    console.log(`🔗 Image gateway URL:`, imageGatewayUrl);
+    
+    // Return the result with the image URL
+    return {
+      success: true,
+      imageUrl: imageGatewayUrl || imageUrl, // Use gateway URL if available
+      imageCid,
+      timings: {
+        imageGeneration: imageGenTime,
+        ipfsImageUpload: ipfsUploadTime,
+        total: ((Date.now() - startTime) / 1000).toFixed(2)
+      }
+    };
+  } catch (error) {
+    console.error('❌ Error generating NFT:', error);
+    throw new Error(error.message || 'Unknown error occurred during NFT generation');
+  }
 } 
