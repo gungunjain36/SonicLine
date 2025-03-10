@@ -91,7 +91,7 @@ const DebugPage: React.FC = () => {
   const fetchData = async (sessionId: string) => {
     try {
       // Fetch communication logs
-      const logsResponse = await axios.get('http://localhost:8000/communication-logs');
+      const logsResponse = await axios.get('https://e52f-2400-4f20-11-c00-31e9-c732-86d7-87c9.ngrok-free.app/communication-logs');
       if (logsResponse.data && logsResponse.data.logs) {
         const newMessages: Message[] = logsResponse.data.logs.map((log: any) => ({
           text: log.message,

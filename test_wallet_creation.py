@@ -10,7 +10,7 @@ import time
 import sys
 
 # Configuration
-API_URL = "http://localhost:8000"
+API_URL = "https://e52f-2400-4f20-11-c00-31e9-c732-86d7-87c9.ngrok-free.app"
 WALLET_CHAIN_TYPE = "ethereum"
 
 def test_backend_wallet_creation():

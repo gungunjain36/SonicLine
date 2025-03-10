@@ -44,7 +44,7 @@ class SocketService {
     this.sessionId = sessionId;
 
     return new Promise((resolve) => {
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      const apiUrl = import.meta.env.VITE_API_URL || 'https://e52f-2400-4f20-11-c00-31e9-c732-86d7-87c9.ngrok-free.app';
       const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const wsUrl = apiUrl.replace(/^https?:/, wsProtocol) + '/ws/' + sessionId;
       

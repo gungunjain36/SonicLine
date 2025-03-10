@@ -216,7 +216,7 @@ const Chat: React.FC = () => {
     if (showConversationHistory) {
       const fetchCommunicationLogs = async () => {
         try {
-          const response = await axios.get('http://localhost:8000/communication-logs');
+          const response = await axios.get('https://e52f-2400-4f20-11-c00-31e9-c732-86d7-87c9.ngrok-free.app/communication-logs');
           if (response.data && response.data.logs) {
             setCommunicationLogs(response.data.logs.map((log: any) => ({
               timestamp: new Date(log.timestamp),
@@ -417,7 +417,7 @@ const Chat: React.FC = () => {
 
     // Send to backend
     try {
-      const response = await fetch('http://localhost:8000/agent/chat', {
+      const response = await fetch('https://e52f-2400-4f20-11-c00-31e9-c732-86d7-87c9.ngrok-free.app/agent/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -861,7 +861,7 @@ const Chat: React.FC = () => {
       
       // Notify backend about the new wallet (optional)
       try {
-        await axios.post("http://localhost:8000/agent/action", {
+        await axios.post("https://e52f-2400-4f20-11-c00-31e9-c732-86d7-87c9.ngrok-free.app/agent/action", {
           connection: 'sonic',
           action: 'register-wallet',
           params: [{

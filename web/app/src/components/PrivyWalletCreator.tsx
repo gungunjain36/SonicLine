@@ -3,7 +3,7 @@ import { usePrivy, useWallets, useCreateWallet } from '@privy-io/react-auth';
 import axios from 'axios';
 
 // Get API URL from environment variables
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_URL = import.meta.env.VITE_API_URL || 'https://e52f-2400-4f20-11-c00-31e9-c732-86d7-87c9.ngrok-free.app';
 
 interface WalletData {
   id: string;

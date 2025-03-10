@@ -25,7 +25,7 @@ export default function TwilioCalls() {
   const fetchCalls = async () => {
     try {
       setLoading(true);
-      const response = await axios.get('http://localhost:8000/twilio/calls');
+      const response = await axios.get('https://e52f-2400-4f20-11-c00-31e9-c732-86d7-87c9.ngrok-free.app/twilio/calls');
       setCalls(response.data.calls);
       setLoading(false);
     } catch (err) {
@@ -56,7 +56,7 @@ export default function TwilioCalls() {
 
   const viewCallDetails = async (callSid: string) => {
     try {
-      const response = await axios.get(`http://localhost:8000/twilio/call/${callSid}`);
+      const response = await axios.get(`https://e52f-2400-4f20-11-c00-31e9-c732-86d7-87c9.ngrok-free.app/twilio/call/${callSid}`);
       setSelectedCall(response.data);
     } catch (err) {
       console.error('Error fetching call details:', err);

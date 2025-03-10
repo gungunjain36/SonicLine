@@ -7,7 +7,7 @@ import argparse
 import json
 import sys
 
-SERVER_URL = "http://localhost:8000"
+SERVER_URL = "https://e52f-2400-4f20-11-c00-31e9-c732-86d7-87c9.ngrok-free.app"
 
 def get_server_status():
     """Get server status"""

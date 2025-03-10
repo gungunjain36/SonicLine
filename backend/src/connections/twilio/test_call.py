@@ -19,7 +19,7 @@ def make_test_call(phone_number, message=None):
     if not message:
         message = "Hello, this is a test call from Sonic Line. The Twilio integration is working correctly."
     
-    url = "http://localhost:8000/twilio/make-call"
+    url = "https://e52f-2400-4f20-11-c00-31e9-c732-86d7-87c9.ngrok-free.app/twilio/make-call"
     payload = {
         "to_number": phone_number,
         "message": message
@@ -40,7 +40,7 @@ def make_test_call(phone_number, message=None):
             time.sleep(5)
             
             # Check call logs
-            logs_url = "http://localhost:8000/twilio/calls"
+            logs_url = "https://e52f-2400-4f20-11-c00-31e9-c732-86d7-87c9.ngrok-free.app/twilio/calls"
             logs_response = requests.get(logs_url)
             logs_data = logs_response.json()
             
@@ -49,7 +49,7 @@ def make_test_call(phone_number, message=None):
                     print(f"Call status: {call.get('status')}")
                     break
             
-            print("\nCall monitoring UI available at: http://localhost:8000/twilio/ui")
+            print("\nCall monitoring UI available at: https://e52f-2400-4f20-11-c00-31e9-c732-86d7-87c9.ngrok-free.app/twilio/ui")
         else:
             print(f"Error: {response_data.get('message', 'Unknown error')}")
     
