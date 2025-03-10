@@ -3,12 +3,31 @@ import { generateImage } from './falAiService';
 import { uploadImageToIPFS, uploadMetadataToIPFS, getIpfsGatewayUrl } from './pinataService';
 import axios from 'axios';
 
+interface NftGenerationResult {
+  success: boolean;
+  imageUrl?: string;
+  imageCid?: string;
+  metadataCid?: string;
+  metadataUri?: string;
+  metadataUrl?: string;
+  transactionHash?: string;
+  explorerLink?: string;
+  error?: string;
+  timings?: {
+    imageGeneration: string;
+    ipfsImageUpload: string;
+    ipfsMetadataUpload?: string;
+    minting?: string;
+    total: string;
+  };
+}
+
 /**
  * Generate an NFT from a text description
  * @param {string} description - Text description of the image to generate
- * @returns {Promise<Object>} - Object containing transaction details
+ * @returns {Promise<NftGenerationResult>} - Object containing transaction details
  */
-export async function generateAndMintNFT(description) {
+export async function generateAndMintNFT(description: string): Promise<NftGenerationResult> {
   try {
     // Step 1: Generate the image using fal.ai
     console.log('🖼️ Generating image from description:', description);
@@ -62,7 +81,7 @@ export async function generateAndMintNFT(description) {
     
     return {
       success: true,
-      imageUrl: imageGatewayUrl || imageUrl, // Use gateway URL if available
+      imageUrl: imageGatewayUrl || imageUrl,
       imageCid,
       metadataCid,
       metadataUri,
@@ -81,7 +100,7 @@ export async function generateAndMintNFT(description) {
     console.error('❌ Error generating and minting NFT:', error);
     return {
       success: false,
-      error: error.message || 'Unknown error occurred'
+      error: error instanceof Error ? error.message : 'Unknown error occurred'
     };
   }
 }
@@ -90,9 +109,9 @@ export async function generateAndMintNFT(description) {
  * Generate an NFT from a text description with progress updates
  * @param {string} description - Text description of the image to generate
  * @param {Function} updateProgress - Callback function to update progress
- * @returns {Promise<Object>} - Object containing the image URL and other details
+ * @returns {Promise<NftGenerationResult>} - Object containing the image URL and other details
  */
-export async function generateNFT(description, updateProgress) {
+export async function generateNFT(description: string, updateProgress: (message: string) => void): Promise<NftGenerationResult> {
   try {
     // Update progress with initial message
     updateProgress('Starting to generate your NFT image...');
@@ -126,7 +145,7 @@ export async function generateNFT(description, updateProgress) {
     // Return the result with the image URL
     return {
       success: true,
-      imageUrl: imageGatewayUrl || imageUrl, // Use gateway URL if available
+      imageUrl: imageGatewayUrl || imageUrl,
       imageCid,
       timings: {
         imageGeneration: imageGenTime,
@@ -136,6 +155,6 @@ export async function generateNFT(description, updateProgress) {
     };
   } catch (error) {
     console.error('❌ Error generating NFT:', error);
-    throw new Error(error.message || 'Unknown error occurred during NFT generation');
+    throw new Error(error instanceof Error ? error.message : 'Unknown error occurred during NFT generation');
   }
 } 

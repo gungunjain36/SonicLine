@@ -7,6 +7,11 @@ import * as nftService from '../utils/nftService';
 import VoiceInput from './VoiceInput';
 import { textToSpeech, playAudio } from '../utils/elevenLabsService';
 import Orb from './Orb';
+import DebugView from './DebugView';
+import { socketService, SocketEventType } from '../utils/socketService';
+import { contextService } from '../utils/contextService';
+import { llmActionDetector } from '../utils/llmActionDetector';
+import { Link } from 'react-router-dom';
 import { 
   MicrophoneIcon, 
   NoSymbolIcon as MicrophoneOffIcon, 
@@ -18,63 +23,118 @@ import {
   PhoneXMarkIcon as PhoneOffIcon, 
   ClockIcon, 
   XMarkIcon, 
-  PaperAirplaneIcon as SendIcon 
+  PaperAirplaneIcon as SendIcon,
+  CommandLineIcon as DebugIcon
 } from '@heroicons/react/24/outline';
 
-interface Message {
-  text: string;
-  isUser: boolean;
-  is_user?: boolean;
-  timestamp: Date;
-  isEmailInput?: boolean;
-  imageUrl?: string;
-  isError?: boolean;
-}
+// Use types from the types file
+import { 
+  Message, 
+  CommunicationLog, 
+  WalletData, 
+  VoiceSettings, 
+  UiMode, 
+  ActionUsage, 
+  ApiResponse, 
+  NftGenerationRequest,
+  PromisedAction
+} from '../types';
 
-interface CommunicationLog {
-  message: string;
-  isUser: boolean;
-  timestamp: Date;
-  imageUrl?: string;
-}
+// Function to check if a message is requesting NFT generation using LLM
+const isNftGenerationRequest = async (message: string): Promise<NftGenerationRequest> => {
+  try {
+    // First, check for simple keywords
+    const lowerMessage = message.toLowerCase();
+    const nftKeywords = ['nft', 'generate', 'create', 'mint', 'make'];
+    const hasNftKeyword = nftKeywords.some(keyword => lowerMessage.includes(keyword));
+    
+    if (hasNftKeyword) {
+      // Extract description - everything after the NFT request
+      let description = lowerMessage;
+      
+      // Remove NFT-related keywords
+      nftKeywords.forEach(keyword => {
+        description = description.replace(keyword, '');
+      });
+      
+      // Remove common request phrases
+      const requestPhrases = ['for me', 'please', 'can you', 'could you', 'would you'];
+      requestPhrases.forEach(phrase => {
+        description = description.replace(phrase, '');
+      });
+      
+      // Clean up the description
+      description = description.trim();
+      if (!description) {
+        description = "Abstract digital art";
+      }
+      
+      return { 
+        isRequest: true, 
+        description
+      };
+    }
+    
+    // Try to use the LLM-based detection as a fallback
+    const intent = await llmActionDetector.analyzeUserIntent(message);
+    
+    if (intent && intent.intent === 'mint-nft' && intent.confidence > 0.7) {
+      return { 
+        isRequest: true, 
+        description: intent.parameters.description || "Abstract digital art" 
+      };
+    }
+    
+    // Fallback to local detection if LLM fails
+    const fallbackResult = llmActionDetector.detectNftRequest(message);
+    if (fallbackResult.isRequest && fallbackResult.confidence > 0.7) {
+      return { 
+        isRequest: true, 
+        description: fallbackResult.description 
+      };
+    }
+    
+    return { isRequest: false, description: '' };
+  } catch (error) {
+    console.error('Error in NFT request detection:', error);
+    
+    // Fallback to local detection if LLM fails
+    const fallbackResult = llmActionDetector.detectNftRequest(message);
+    if (fallbackResult.isRequest && fallbackResult.confidence > 0.7) {
+      return { 
+        isRequest: true, 
+        description: fallbackResult.description 
+      };
+    }
+    
+    return { isRequest: false, description: '' };
+  }
+};
 
-interface WalletData {
-  id: string;
-  address: string | null | undefined;
-  chain_type: string;
-  policy_ids?: string[];
-}
-
-// Add a new interface for voice settings
-interface VoiceSettings {
-  enabled: boolean;
-  autoPlayResponses: boolean;
-}
-
-// Add interface for UI mode
-interface UiMode {
-  chatVisible: boolean;
-  voiceOnly: boolean;
-}
-
-// Add interface for tracking actions
-interface ActionUsage {
-  name: string;
-  description: string;
-  timestamp: Date;
-}
-
-// Define the type for the API response
-interface ApiResponse {
-  message: string;
-  response: string;
-  logs: Array<{
-    timestamp: string;
-    is_user: boolean;
-    message: string;
-    imageUrl?: string;
-  }>;
-}
+// Function to check if the agent's response is requesting NFT generation
+const checkAgentResponseForNftRequest = async (response: string): Promise<NftGenerationRequest> => {
+  try {
+    // Try to use the LLM-based detection for promised actions
+    const promisedActions = await llmActionDetector.detectPromisedActions(response);
+    
+    // Check if any of the promised actions is an NFT generation
+    const nftAction = promisedActions.find(action => 
+      action.type === 'mint-nft' && action.probability > 0.7
+    );
+    
+    if (nftAction) {
+      return { 
+        isRequest: true, 
+        description: nftAction.parameters.description || "Abstract digital art" 
+      };
+    }
+    
+    return { isRequest: false, description: '' };
+  } catch (error) {
+    console.error('Error in NFT promise detection:', error);
+    return { isRequest: false, description: '' };
+  }
+};
 
 const Chat: React.FC = () => {
   const { authenticated, login, user } = usePrivy();
@@ -97,7 +157,8 @@ const Chat: React.FC = () => {
   // Add new state for UI mode
   const [uiMode, setUiMode] = useState<UiMode>({
     chatVisible: true,
-    voiceOnly: false
+    voiceOnly: false,
+    debugMode: false
   });
   
   // Add state for tracking actions
@@ -129,10 +190,26 @@ const Chat: React.FC = () => {
   });
   const [isSpeaking, setIsSpeaking] = useState(false);
 
+  // Add state for session ID
+  const [sessionId, setSessionId] = useState<string>(`session_${Math.random().toString(36).substring(2, 9)}`);
+  
+  // Add state for promised actions
+  const [promisedActions, setPromisedActions] = useState<PromisedAction[]>([]);
+
   // Auto-scroll to bottom when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // Initialize session ID from localStorage
+  useEffect(() => {
+    const storedSessionId = localStorage.getItem('sonicline_session_id');
+    if (storedSessionId) {
+      setSessionId(storedSessionId);
+    } else {
+      localStorage.setItem('sonicline_session_id', sessionId);
+    }
+  }, []);
 
   // Fetch communication logs periodically
   useEffect(() => {
@@ -160,19 +237,137 @@ const Chat: React.FC = () => {
     }
   }, [showConversationHistory]);
 
-  // Use the availableActions state
+  // Initialize socket connection and context service
   useEffect(() => {
-    // Initialize available actions
-    setAvailableActions([
-      'get-token-by-ticker',
-      'get-sonic-balance',
-      'send-sonic',
-      'swap-sonic',
-      'get-transaction-history',
-      'create-wallet',
-      'mint-nft'
-    ]);
+    // Connect to WebSocket
+    socketService.connect(sessionId).then(connected => {
+      if (connected) {
+        console.log(`Connected to session: ${sessionId}`);
+      } else {
+        console.error(`Failed to connect to session: ${sessionId}`);
+      }
+    });
+    
+    // Initialize context
+    contextService.initContext(sessionId);
+    
+    // Register socket event listeners
+    socketService.on(SocketEventType.ACTION_USED, (action: ActionUsage) => {
+      // Only add actions from other devices
+      if (action.deviceId !== socketService.getDeviceId()) {
+        setUsedActions(prev => [...prev, action]);
+      }
+    });
+    
+    socketService.on(SocketEventType.NEW_MESSAGE, (message: Message) => {
+      // Only add messages from other devices
+      if (message.deviceId !== socketService.getDeviceId()) {
+        setMessages(prev => [...prev, message]);
+      }
+    });
+    
+    // Clean up on unmount
+    return () => {
+      socketService.disconnect();
+    };
+  }, [sessionId]);
+  
+  // Update promised actions from context service
+  useEffect(() => {
+    const updatePromisedActions = () => {
+      setPromisedActions(contextService.getPromisedActions());
+    };
+    
+    // Update initially
+    updatePromisedActions();
+    
+    // Set up interval to check for new promised actions
+    const interval = setInterval(updatePromisedActions, 5000);
+    
+    return () => clearInterval(interval);
   }, []);
+  
+  // Execute promised actions when detected
+  useEffect(() => {
+    if (promisedActions.length > 0) {
+      // Get the highest probability action
+      const topAction = [...promisedActions].sort((a, b) => b.probability - a.probability)[0];
+      
+      // Only execute if probability is high enough
+      if (topAction.probability >= 0.8) {
+        console.log(`Executing promised action: ${topAction.type}`, topAction.parameters);
+        
+        // Execute the action based on type
+        switch (topAction.type) {
+          case 'create-wallet':
+            handleWalletCreation(topAction.parameters.walletType || 'ethereum');
+            break;
+          case 'mint-nft':
+            handleNftGeneration(topAction.parameters.description || 'Abstract digital art');
+            break;
+          case 'swap-sonic':
+            // Simulate token swap
+            simulateActionUsage('swap-sonic');
+            // Add a success message
+            const swapMessage: Message = {
+              text: `✅ Token swap completed successfully! Swapped ${topAction.parameters.fromToken || 'SONIC'} to ${topAction.parameters.toToken || 'ETH'}`,
+              isUser: false,
+              timestamp: new Date(),
+              deviceId: socketService.getDeviceId(),
+              sessionId: sessionId
+            };
+            setMessages(prev => [...prev, swapMessage]);
+            
+            // Speak the success message
+            if (voiceSettings.enabled && voiceSettings.autoPlayResponses) {
+              speakText(swapMessage.text);
+            }
+            break;
+          case 'get-token-price':
+            // Simulate price check
+            simulateActionUsage('get-token-by-ticker');
+            // Add a success message
+            const token = topAction.parameters.token || 'SONIC';
+            const priceMessage: Message = {
+              text: `📊 Current price of ${token}: $${(Math.random() * 10).toFixed(2)}`,
+              isUser: false,
+              timestamp: new Date(),
+              deviceId: socketService.getDeviceId(),
+              sessionId: sessionId
+            };
+            setMessages(prev => [...prev, priceMessage]);
+            
+            // Speak the success message
+            if (voiceSettings.enabled && voiceSettings.autoPlayResponses) {
+              speakText(priceMessage.text);
+            }
+            break;
+          case 'get-transaction-history':
+            // Simulate transaction history
+            simulateActionUsage('get-transaction-history');
+            // Add a success message
+            const historyMessage: Message = {
+              text: "📜 Here's your recent transaction history:\n\n1. Swap SONIC → ETH (0.5 ETH) - 2 hours ago\n2. Received 100 SONIC - Yesterday\n3. Minted NFT 'Abstract Art #42' - 3 days ago",
+              isUser: false,
+              timestamp: new Date(),
+              deviceId: socketService.getDeviceId(),
+              sessionId: sessionId
+            };
+            setMessages(prev => [...prev, historyMessage]);
+            
+            // Speak the success message
+            if (voiceSettings.enabled && voiceSettings.autoPlayResponses) {
+              speakText(historyMessage.text);
+            }
+            break;
+        }
+        
+        // Remove the executed action
+        contextService.clearPromisedActions();
+        setPromisedActions([]);
+      }
+    }
+  }, [promisedActions]);
 
   // Add a function to handle voice input
   const handleVoiceInput = (text: string) => {
@@ -182,19 +377,29 @@ const Chat: React.FC = () => {
     }
   };
 
-  // Modify the handleSend function to include voice feedback
+  // Modify the handleSend function to use LLM-based intent detection
   const handleSend = async (message: string) => {
     if (!message.trim()) return;
 
-    // Add user message
+    // Create user message
     const userMessage: Message = {
       text: message,
       isUser: true,
-      timestamp: new Date()
+      timestamp: new Date(),
+      deviceId: socketService.getDeviceId(),
+      sessionId: sessionId
     };
+    
+    // Add to local state
     setMessages(prev => [...prev, userMessage]);
     setInputMessage('');
     setIsLoading(true);
+    
+    // Add to context
+    contextService.addMessage(userMessage);
+    
+    // Broadcast to other clients
+    socketService.sendNewMessage(userMessage);
 
     // Check if this is an email login request
     if (waitingForEmail) {
@@ -202,25 +407,12 @@ const Chat: React.FC = () => {
       return;
     }
 
-    // Check if this is an NFT generation request
-    const nftRequest = isNftGenerationRequest(message);
+    // Check if this is an NFT generation request using LLM
+    const nftRequest = await isNftGenerationRequest(message);
     if (nftRequest.isRequest) {
       handleNftGeneration(nftRequest.description);
       simulateActionUsage('mint-nft');
       return;
-    }
-
-    // Simulate action usage based on message content
-    if (message.toLowerCase().includes('balance')) {
-      simulateActionUsage('get-sonic-balance');
-    } else if (message.toLowerCase().includes('price')) {
-      simulateActionUsage('get-token-price');
-    } else if (message.toLowerCase().includes('swap')) {
-      simulateActionUsage('swap-sonic');
-    } else if (message.toLowerCase().includes('transaction') || message.toLowerCase().includes('history')) {
-      simulateActionUsage('get-transaction-history');
-    } else if (message.toLowerCase().includes('wallet')) {
-      simulateActionUsage('create-wallet');
     }
 
     // Send to backend
@@ -237,49 +429,240 @@ const Chat: React.FC = () => {
         const data: ApiResponse = await response.json();
         setIsLoading(false);
         
+        // Check if the backend response includes an NFT generation action
+        if (data.action && data.action.type === 'nft_generation') {
+          // Add assistant message
+          const assistantMessage: Message = {
+            text: data.response,
+            isUser: false,
+            timestamp: new Date(),
+            deviceId: socketService.getDeviceId(),
+            sessionId: sessionId
+          };
+          setMessages(prev => [...prev, assistantMessage]);
+          
+          // Speak the assistant's response if voice is enabled
+          if (voiceSettings.enabled && voiceSettings.autoPlayResponses) {
+            speakText(data.response);
+          }
+          
+          // Handle NFT generation with the description from the action
+          handleNftGeneration(data.action.description);
+          simulateActionUsage('mint-nft');
+          return;
+        }
+        
         // Add assistant message
         const assistantMessage: Message = {
           text: data.response,
           isUser: false,
-          timestamp: new Date()
+          timestamp: new Date(),
+          deviceId: socketService.getDeviceId(),
+          sessionId: sessionId
         };
         setMessages(prev => [...prev, assistantMessage]);
         
-        // Check if the response indicates an NFT request
-        const nftResponse = checkAgentResponseForNftRequest(data.response);
-        if (nftResponse.isNftResponse) {
-          handleNftGeneration(nftResponse.description);
-          simulateActionUsage('mint-nft');
-        }
-        
-        // Auto-play response if enabled
+        // Speak the assistant's response if voice is enabled
         if (voiceSettings.enabled && voiceSettings.autoPlayResponses) {
           speakText(data.response);
         }
+        
+        // Check if the response indicates an action that should be performed
+        checkAndPerformPromisedActions(data.response);
+        
+        // Check if the response is requesting an NFT
+        const nftResponse = await checkAgentResponseForNftRequest(data.response);
+        if (nftResponse.isRequest) {
+          handleNftGeneration(nftResponse.description);
+        }
+        
+        // Update communication logs
+        if (data.logs && data.logs.length > 0) {
+          const newLogs: CommunicationLog[] = data.logs.map(log => ({
+            message: log.message,
+            isUser: log.is_user,
+            timestamp: new Date(log.timestamp),
+            imageUrl: log.imageUrl
+          }));
+          setCommunicationLogs(prev => [...prev, ...newLogs]);
+        }
+        
+        // Track tools used by the backend
+        if (data.tools && data.tools.length > 0) {
+          data.tools.forEach(tool => {
+            simulateActionUsage(tool.name);
+          });
+        }
+      } else {
+        setIsLoading(false);
+        const errorMessage: Message = {
+          text: "Sorry, there was an error processing your request. Please try again.",
+          isUser: false,
+          timestamp: new Date(),
+          isError: true,
+          deviceId: socketService.getDeviceId(),
+          sessionId: sessionId
+        };
+        setMessages(prev => [...prev, errorMessage]);
+        
+        // Speak the error message if voice is enabled
+        if (voiceSettings.enabled && voiceSettings.autoPlayResponses) {
+          speakText(errorMessage.text);
+        }
       }
     } catch (error) {
+      console.error('Error sending message:', error);
       setIsLoading(false);
-      console.error('Error:', error);
-      
-      // Add error message
       const errorMessage: Message = {
-        text: "Sorry, there was an error processing your request. Please try again.",
+        text: "Sorry, there was an error connecting to the server. Please check your connection and try again.",
         isUser: false,
         timestamp: new Date(),
-        isError: true
+        isError: true,
+        deviceId: socketService.getDeviceId(),
+        sessionId: sessionId
       };
       setMessages(prev => [...prev, errorMessage]);
+      
+      // Speak the error message if voice is enabled
+      if (voiceSettings.enabled && voiceSettings.autoPlayResponses) {
+        speakText(errorMessage.text);
+      }
     }
   };
 
-  // Add a function to speak text using Eleven Labs
+  // Update the checkAndPerformPromisedActions function to use LLM
+  const checkAndPerformPromisedActions = async (response: string) => {
+    // Add the assistant's message to context
+    const assistantMessage: Message = {
+      text: response,
+      isUser: false,
+      timestamp: new Date(),
+      deviceId: socketService.getDeviceId(),
+      sessionId: sessionId
+    };
+    
+    contextService.addMessage(assistantMessage);
+    
+    // Use LLM to detect promised actions
+    try {
+      const detectedActions = await llmActionDetector.detectPromisedActions(response);
+      
+      // Process each detected action
+      for (const action of detectedActions) {
+        if (action.probability >= 0.8) {
+          console.log(`Detected promised action with high confidence: ${action.type}`, action.parameters);
+          
+          // Add to promised actions for execution
+          contextService.addPromisedAction(action);
+        }
+      }
+    } catch (error) {
+      console.error('Error detecting promised actions:', error);
+    }
+  };
+
+  // Modify the handleNftGeneration function to use the restored IPFS-based NFT generation
+  const handleNftGeneration = async (description: string) => {
+    try {
+      // Add a message indicating NFT generation is starting
+      const startMessage: Message = {
+        text: `Starting NFT generation with prompt: "${description}"`,
+        isUser: false,
+        timestamp: new Date(),
+        deviceId: socketService.getDeviceId(),
+        sessionId: sessionId
+      };
+      setMessages(prev => [...prev, startMessage]);
+      
+      // Speak the start message
+      if (voiceSettings.enabled && voiceSettings.autoPlayResponses) {
+        speakText(startMessage.text);
+      }
+      
+      // Update progress function that also speaks updates
+      const updateProgress = (message: string) => {
+        const progressMessage: Message = {
+          text: message,
+          isUser: false,
+          timestamp: new Date(),
+          deviceId: socketService.getDeviceId(),
+          sessionId: sessionId
+        };
+        setMessages(prev => [...prev, progressMessage]);
+        
+        // Speak the progress message
+        if (voiceSettings.enabled && voiceSettings.autoPlayResponses) {
+          speakText(message);
+        }
+      };
+      
+      // Generate and mint the NFT using the restored IPFS-based implementation
+      const result = await nftService.generateAndMintNFT(description);
+      
+      if (result.success) {
+        // Add the success message with the image
+        const successMessage: Message = {
+          text: `✅ NFT generated and minted successfully!\n\n🔗 View on Explorer: ${result.explorerLink}\n\nTransaction Hash: ${result.transactionHash}\n\nIPFS Image: ${result.imageUrl}\nIPFS Metadata: ${result.metadataUrl}`,
+          isUser: false,
+          timestamp: new Date(),
+          imageUrl: result.imageUrl,
+          deviceId: socketService.getDeviceId(),
+          sessionId: sessionId
+        };
+        setMessages(prev => [...prev, successMessage]);
+        
+        // Speak the success message
+        if (voiceSettings.enabled && voiceSettings.autoPlayResponses) {
+          speakText("Your NFT has been generated and minted successfully! You can now view it on the blockchain explorer.");
+        }
+        
+        // Track the NFT minting action
+        simulateActionUsage('mint-nft');
+      } else {
+        throw new Error(result.error);
+      }
+      
+    } catch (error) {
+      console.error('Error generating NFT:', error);
+      const errorMessage: Message = {
+        text: `Sorry, there was an error generating your NFT: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        isUser: false,
+        timestamp: new Date(),
+        isError: true,
+        deviceId: socketService.getDeviceId(),
+        sessionId: sessionId
+      };
+      setMessages(prev => [...prev, errorMessage]);
+      
+      // Speak the error message
+      if (voiceSettings.enabled && voiceSettings.autoPlayResponses) {
+        speakText(errorMessage.text);
+      }
+    }
+  };
+
+  // Modify the speakText function to handle all types of messages
   const speakText = async (text: string) => {
     try {
       setIsSpeaking(true);
-      const audioBlob = await textToSpeech(text);
-      await playAudio(audioBlob);
+      
+      // Clean up the text for better speech
+      let cleanText = text
+        .replace(/```[^`]*```/g, "Code block omitted for speech.") // Replace code blocks
+        .replace(/\*\*([^*]*)\*\*/g, "$1") // Remove markdown bold
+        .replace(/\*([^*]*)\*/g, "$1") // Remove markdown italic
+        .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1") // Replace markdown links with just the text
+        .replace(/https?:\/\/[^\s]+/g, "URL omitted for speech."); // Replace URLs
+      
+      // Limit text length for speech
+      if (cleanText.length > 500) {
+        cleanText = cleanText.substring(0, 500) + "... I'll stop here for brevity.";
+      }
+      
+      const audioUrl = await textToSpeech(cleanText);
+      await playAudio(audioUrl);
     } catch (error) {
-      console.error('Error speaking text:', error);
+      console.error('Error with text-to-speech:', error);
     } finally {
       setIsSpeaking(false);
     }
@@ -336,14 +719,19 @@ const Chat: React.FC = () => {
       'mint-nft': 'Mint an NFT on Sonic'
     };
     
-    setUsedActions(prev => [
-      ...prev, 
-      {
+    const action: ActionUsage = {
         name: actionName,
         description: actionDescriptions[actionName] || 'Unknown action',
-        timestamp: new Date()
-      }
-    ]);
+      timestamp: new Date(),
+      sessionId: sessionId,
+      deviceId: socketService.getDeviceId()
+    };
+    
+    // Add to local state
+    setUsedActions(prev => [...prev, action]);
+    
+    // Broadcast to other clients
+    socketService.sendActionUsed(action);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -572,172 +960,6 @@ const Chat: React.FC = () => {
     }
   };
 
-  // Function to handle NFT generation requests
-  const handleNftGeneration = async (description: string) => {
-    try {
-      setIsLoading(true);
-      
-      // Update progress messages
-      const updateProgress = (message: string) => {
-        setMessages(prev => [...prev, {
-          text: message,
-          isUser: false,
-          timestamp: new Date()
-        }]);
-      };
-      
-      // Call the NFT generation service with progress updates
-      updateProgress("🖼️ Generating image using AI... (this may take up to a minute)");
-      
-      // Call the NFT generation service
-      const result = await nftService.generateAndMintNFT(description);
-      
-      if (result.success) {
-        // Show image preview
-        updateProgress(`✅ Image generated successfully! Preview:`);
-        
-        // Add a message with the image preview
-        const imagePreviewMessage: Message = {
-          text: "NFT Preview:",
-          isUser: false,
-          timestamp: new Date(),
-          imageUrl: result.imageUrl
-        };
-        setMessages(prev => [...prev, imagePreviewMessage]);
-        
-        // Show IPFS upload progress
-        updateProgress(`📤 Uploaded to IPFS with Image CID: ${result.imageCid}`);
-        updateProgress(`🔗 View on IPFS: ${result.imageUrl}`);
-        
-        // Show metadata progress
-        updateProgress(`📝 Created and uploaded metadata with CID: ${result.metadataCid}`);
-        if (result.metadataUrl) {
-          updateProgress(`🔗 View metadata on IPFS: ${result.metadataUrl}`);
-        }
-        
-        // Show minting progress
-        updateProgress(`⛓️ Minting NFT on Sonic blockchain...`);
-        
-        // Mint the NFT
-        try {
-          const mintResponse = await axios.post('http://localhost:8000/api/mint-nft', {
-            uri: result.imageUrl,
-            description: description
-          });
-          
-          if (mintResponse.data.success) {
-            updateProgress(`✅ NFT minted successfully!`);
-            if (mintResponse.data.transaction_hash) {
-              updateProgress(`🔍 Transaction: ${mintResponse.data.transaction_hash}`);
-            }
-            if (mintResponse.data.explorer_link) {
-              updateProgress(`🔍 View on explorer: ${mintResponse.data.explorer_link}`);
-            }
-          } else {
-            updateProgress(`❌ Failed to mint NFT: ${mintResponse.data.error || 'Unknown error'}`);
-          }
-        } catch (error) {
-          console.error('Error minting NFT:', error);
-          updateProgress(`❌ Error minting NFT: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        }
-      } else {
-        updateProgress(`❌ Failed to generate NFT: ${result.error || 'Unknown error'}`);
-      }
-    } catch (error) {
-      console.error('Error generating NFT:', error);
-      const errorMessage: Message = {
-        text: `❌ Error generating NFT: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        isUser: false,
-        timestamp: new Date(),
-        isError: true
-      };
-      setMessages(prev => [...prev, errorMessage]);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Function to check if a message is an NFT generation request
-  const isNftGenerationRequest = (message: string): { isRequest: boolean, description: string } => {
-    // Define patterns to match NFT generation requests
-    const patterns = [
-      /mint(?:\s+an?)?\s+nft\s+(?:of|with|showing|depicting)\s+(.+)/i,
-      /create(?:\s+an?)?\s+nft\s+(?:of|with|showing|depicting)\s+(.+)/i,
-      /generate(?:\s+an?)?\s+nft\s+(?:of|with|showing|depicting)\s+(.+)/i,
-      /make(?:\s+an?)?\s+nft\s+(?:of|with|showing|depicting)\s+(.+)/i,
-      /mint(?:\s+an?)?\s+nft\s+where\s+(.+)/i,
-      /create(?:\s+an?)?\s+nft\s+where\s+(.+)/i,
-      /generate(?:\s+an?)?\s+nft\s+where\s+(.+)/i,
-      /make(?:\s+an?)?\s+nft\s+where\s+(.+)/i
-    ];
-    
-    // Check if the message matches any of the patterns
-    for (const pattern of patterns) {
-      const match = message.match(pattern);
-      if (match && match[1]) {
-        console.log(`🔍 Detected NFT generation request: "${match[1].trim()}"`);
-        return { isRequest: true, description: match[1].trim() };
-      }
-    }
-    
-    // If no pattern matches, check for simpler patterns
-    if (/nft.*car.*horse/i.test(message) || /car.*riding.*horse/i.test(message)) {
-      const description = "a car riding on a horse";
-      console.log(`🔍 Detected special NFT case: "${description}"`);
-      return { isRequest: true, description };
-    }
-    
-    return { isRequest: false, description: '' };
-  };
-
-  // Function to check if an agent response contains an NFT generation instruction
-  const checkAgentResponseForNftRequest = (message: string): { isNftResponse: boolean, description: string } => {
-    // Patterns to match the agent's response about NFT creation
-    const patterns = [
-      /I'll create an NFT based on your description: "([^"]+)"/i,
-      /I'll generate an NFT (of|with|showing|depicting) "([^"]+)"/i,
-      /I'll mint an NFT (of|with|showing|depicting) "([^"]+)"/i,
-      /creating an NFT (of|with|showing|depicting) "([^"]+)"/i,
-      /generating an NFT (of|with|showing|depicting) "([^"]+)"/i,
-      /minting an NFT (of|with|showing|depicting) "([^"]+)"/i,
-      /To create your unique NFT with the theme "([^"]+)"/i,
-      /Let's create an NFT with a metadata placeholder/i
-    ];
-    
-    // Check for the first pattern which has a different capture group structure
-    const firstMatch = message.match(patterns[0]);
-    if (firstMatch && firstMatch[1]) {
-      console.log(`🔍 Detected NFT instruction in agent response: "${firstMatch[1].trim()}"`);
-      return { isNftResponse: true, description: firstMatch[1].trim() };
-    }
-    
-    // Check for patterns with a different capture group structure
-    for (let i = 1; i < 7; i++) {
-      const match = message.match(patterns[i]);
-      if (match && match[2]) {
-        console.log(`🔍 Detected NFT instruction in agent response: "${match[2].trim()}"`);
-        return { isNftResponse: true, description: match[2].trim() };
-      }
-    }
-    
-    // Check for the specific pattern about metadata placeholder
-    if (patterns[7].test(message)) {
-      // Extract description from the message if possible
-      const descMatch = message.match(/theme "([^"]+)"/i) || message.match(/NFT with a ([^"]+)/i);
-      const description = descMatch ? descMatch[1].trim() : "a car riding on a horse";
-      console.log(`🔍 Detected metadata placeholder NFT instruction: "${description}"`);
-      return { isNftResponse: true, description };
-    }
-    
-    // Special case for the car riding on a horse
-    if (/car riding on a horse/i.test(message)) {
-      console.log(`🔍 Detected special case NFT instruction: "a car riding on a horse"`);
-      return { isNftResponse: true, description: "a car riding on a horse" };
-    }
-    
-    return { isNftResponse: false, description: '' };
-  };
-
   // Replace the toggleConversationHistory function
   const toggleConversationHistory = () => {
     setShowConversationHistory(prev => !prev);
@@ -760,6 +982,15 @@ const Chat: React.FC = () => {
 
   // Add textareaRef
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Add a toggle function for debug mode
+  const toggleDebugMode = () => {
+    setUiMode(prev => ({
+      ...prev,
+      debugMode: !prev.debugMode,
+      voiceOnly: false // Exit voice-only mode when entering debug mode
+    }));
+  };
 
   return (
     <div className="flex flex-col h-screen bg-gradient-to-br from-gray-900 to-black text-white">
@@ -787,28 +1018,42 @@ const Chat: React.FC = () => {
             {voiceSettings.enabled ? <MicrophoneIcon className="h-4 w-4" /> : <MicrophoneOffIcon className="h-4 w-4" />}
           </button>
           
-          <button 
+          <button
             onClick={toggleVoiceOnlyMode} 
             className={`p-2 rounded-lg transition-all ${uiMode.voiceOnly ? 'bg-gradient-to-r from-[#f58435] to-[#224f81] text-white' : 'bg-black/30 text-gray-400'}`}
             title={uiMode.voiceOnly ? "Switch to chat mode" : "Switch to voice-only mode"}
+            disabled={uiMode.debugMode}
           >
             {uiMode.voiceOnly ? <PhoneIcon className="h-4 w-4" /> : <PhoneOffIcon className="h-4 w-4" />}
           </button>
           
-          <button 
+          <button
+            onClick={toggleDebugMode} 
+            className={`p-2 rounded-lg transition-all ${uiMode.debugMode ? 'bg-gradient-to-r from-[#f58435] to-[#224f81] text-white' : 'bg-black/30 text-gray-400'}`}
+            title={uiMode.debugMode ? "Exit debug mode" : "Enter debug mode"}
+          >
+            <DebugIcon className="h-4 w-4" />
+          </button>
+          
+        <button
             onClick={toggleConversationHistory} 
             className="p-2 bg-black/30 rounded-lg text-gray-400 hover:bg-black/40 transition-all"
             title="Show conversation history"
-          >
+        >
             <ClockIcon className="h-4 w-4" />
-          </button>
+        </button>
         </div>
       </div>
 
       {/* Main content */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Voice-only mode with Orb */}
-        {uiMode.voiceOnly ? (
+        {/* Debug mode */}
+        {uiMode.debugMode ? (
+          <div className="flex-1 p-4">
+            <DebugView messages={messages} usedActions={usedActions} />
+          </div>
+        ) : uiMode.voiceOnly ? (
+          // Voice-only mode with Orb
           <div className="flex-1 flex flex-col items-center justify-center p-6 relative">
             {/* Orb container */}
             <div className="w-full max-w-md aspect-square relative mx-auto">
@@ -821,31 +1066,31 @@ const Chat: React.FC = () => {
               
               {/* Microphone button overlay */}
               <div className="absolute inset-0 flex items-center justify-center">
-                {voiceSettings.enabled && (
+                  {voiceSettings.enabled && (
                   <div className="scale-150 z-10">
-                    <VoiceInput 
-                      onFinalResult={handleVoiceInput}
+                      <VoiceInput 
+                        onFinalResult={handleVoiceInput}
                       disabled={isLoading}
-                    />
-                  </div>
-                )}
-              </div>
-            </div>
-            
-            {/* Last message display */}
-            {messages.length > 0 && (
+                      />
+                    </div>
+                  )}
+                      </div>
+                </div>
+                
+                {/* Last message display */}
+                {messages.length > 0 && (
               <div className="w-full max-w-md mt-8 bg-black/20 backdrop-blur-sm p-4 rounded-lg border border-gray-800/50">
                 <p className="text-sm text-gray-400 mb-2">Last message:</p>
                 <p className="text-white">{messages[messages.length - 1].text}</p>
-              </div>
-            )}
+                  </div>
+                )}
             
             {/* Speaking indicator */}
             {isSpeaking && (
               <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 flex items-center space-x-2 bg-black/30 backdrop-blur-sm px-4 py-2 rounded-full">
                 <span className="text-white text-sm">Speaking...</span>
-              </div>
-            )}
+                    </div>
+                  )}
           </div>
         ) : (
           // Regular chat mode - more minimal
@@ -857,20 +1102,20 @@ const Chat: React.FC = () => {
                     <div className="flex flex-col items-center justify-center h-full text-center">
                       <div className="w-24 h-24 mb-6 rounded-full bg-gradient-to-r from-[#f58435]/10 to-[#224f81]/10 flex items-center justify-center">
                         <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-white/30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
-                        </svg>
-                      </div>
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                      </svg>
+                    </div>
                       <h3 className="text-2xl font-bold mb-2 bg-clip-text text-transparent bg-gradient-to-r from-[#f58435] via-white to-[#224f81]">Start a Conversation</h3>
                       <p className="text-lg text-orange-100/70 max-w-md font-light">Ask about blockchain, tokens, or use voice commands</p>
                     </div>
                   )}
                   
                   {messages.map((msg, index) => (
-                    <div 
-                      key={index} 
-                      className={`flex ${msg.isUser ? 'justify-end' : 'justify-start'}`}
-                    >
                       <div 
+                        key={index} 
+                      className={`flex ${msg.isUser ? 'justify-end' : 'justify-start'}`}
+                      >
+                        <div 
                         className={`max-w-3/4 p-3 rounded-lg ${
                           msg.isUser 
                             ? 'bg-gradient-to-r from-[#f58435]/20 to-[#df561f]/20 border border-[#f58435]/30 text-white' 
@@ -900,15 +1145,15 @@ const Chat: React.FC = () => {
                             {msg.imageUrl && (
                               <div className="mt-2 rounded-lg overflow-hidden border border-gray-700">
                                 <img src={msg.imageUrl} alt="Generated content" className="w-full h-auto" />
-                              </div>
-                            )}
+                            </div>
+                          )}
                           </>
                         )}
                         <div className="text-xs text-gray-400 mt-1">
                           {msg.timestamp.toLocaleTimeString()}
                         </div>
+                        </div>
                       </div>
-                    </div>
                   ))}
                   {isLoading && (
                     <div className="flex justify-start">
@@ -926,24 +1171,24 @@ const Chat: React.FC = () => {
                 {/* Minimal Input area */}
                 <div className="relative z-10 p-3 bg-black/20 backdrop-blur-sm">
                   <div className="flex space-x-2">
-                    {voiceSettings.enabled && (
+                        {voiceSettings.enabled && (
                       <div className="flex-none">
-                        <VoiceInput 
-                          onFinalResult={handleVoiceInput} 
+                            <VoiceInput 
+                              onFinalResult={handleVoiceInput}
                           disabled={isLoading}
-                        />
-                      </div>
-                    )}
+                            />
+                          </div>
+                        )}
                     
                     <div className="relative flex-1">
-                      <textarea
+                        <textarea
                         ref={textareaRef}
-                        value={inputMessage}
-                        onChange={(e) => setInputMessage(e.target.value)}
-                        onKeyDown={handleKeyDown}
+                          value={inputMessage}
+                          onChange={(e) => setInputMessage(e.target.value)}
+                          onKeyDown={handleKeyDown}
                         placeholder="Type your message..."
                         className="w-full p-2 pr-10 bg-black/30 border border-gray-800/50 rounded-lg text-white resize-none focus:outline-none focus:ring-1 focus:ring-[#f58435]/50"
-                        rows={1}
+                          rows={1}
                         disabled={isLoading}
                       />
                       <button
@@ -1041,7 +1286,7 @@ const Chat: React.FC = () => {
                 >
                   <XMarkIcon className="h-4 w-4 text-gray-400" />
                 </button>
-              </div>
+            </div>
             </div>
             <div className="p-3 space-y-3">
               {communicationLogs.length === 0 ? (
@@ -1056,9 +1301,9 @@ const Chat: React.FC = () => {
                       <span className="text-xs text-gray-500">{log.timestamp.toLocaleString()}</span>
                       <span className={`text-xs px-1.5 py-0.5 rounded-full ${log.isUser ? 'bg-[#f58435]/20 text-[#f58435]' : 'bg-[#224f81]/20 text-[#224f81]'}`}>
                         {log.isUser ? 'You' : 'AI'}
-                      </span>
-                    </div>
-                  </div>
+                        </span>
+                      </div>
+                        </div>
                 ))
               )}
             </div>
@@ -1094,7 +1339,19 @@ const Chat: React.FC = () => {
           </div>
         </div>
       )}
-    </div>
+
+      {/* Add a link to the debug page */}
+      <div className="absolute bottom-4 right-4 z-50">
+        <Link 
+          to={`/debug?session=${sessionId}`}
+          className="flex items-center space-x-1 bg-gray-800/50 hover:bg-gray-700/50 px-3 py-1 rounded-full text-xs"
+          target="_blank"
+        >
+          <DebugIcon className="w-4 h-4" />
+          <span>Open Debug Console</span>
+        </Link>
+            </div>
+          </div>
   );
 }
 
